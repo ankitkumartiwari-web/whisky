@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+.build/
+.cache/
+
+# Local env files
+.env
+.env.local
+.env.*.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+server-8787-cmd.err.log
+server-8787-cmd.out.log
+server-8788-cmd.err.log
+server-8788-cmd.out.log
+server-8788.err.log
+server-8788.out.log
+
+# IDE files
+.vscode/
+.DS_Store
+
+# Misc
+coverage/
