@@ -219,7 +219,7 @@ export function LoginPage({
                   onClick={() => switchMode('signin')}
                   className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
                     mode === 'signin'
-                      ? 'bg-[#1DB954] text-[#0A0A0A] shadow-sm'
+                      ? 'bg-[var(--accent)] text-[#0A0A0A] shadow-sm'
                       : 'bg-transparent text-muted-foreground hover:text-foreground'
                   }`}
                 >
@@ -230,7 +230,7 @@ export function LoginPage({
                   onClick={() => switchMode('signup')}
                   className={`rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
                     mode === 'signup'
-                      ? 'bg-[#1DB954] text-[#0A0A0A] shadow-sm'
+                      ? 'bg-[var(--accent)] text-[#0A0A0A] shadow-sm'
                       : 'bg-transparent text-muted-foreground hover:text-foreground'
                   }`}
                 >
@@ -326,7 +326,7 @@ export function LoginPage({
                         type="button"
                         onClick={handleForgotPassword}
                         disabled={isRequestingReset}
-                        className="text-xs font-medium text-[#1DB954] hover:underline disabled:opacity-70"
+                        className="text-xs font-medium text-[var(--accent)] hover:underline disabled:opacity-70"
                       >
                         {isRequestingReset ? 'Sending reset email...' : 'Forgot password?'}
                       </button>
@@ -370,7 +370,7 @@ export function LoginPage({
                 <button
                   type="submit"
                   disabled={isSubmitting || isOAuthSubmitting}
-                  className="w-full rounded-xl bg-[#1DB954] px-4 py-3 text-sm font-semibold text-[#0A0A0A] transition-colors hover:bg-[#22C55E] disabled:cursor-not-allowed disabled:opacity-70"
+                  className="w-full rounded-xl bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[#0A0A0A] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   {isSubmitting
                     ? mode === 'signin'
@@ -389,7 +389,7 @@ export function LoginPage({
                     <button
                       type="button"
                       onClick={() => switchMode('signup')}
-                      className="font-semibold text-[#1DB954] hover:underline"
+                      className="font-semibold text-[var(--accent)] hover:underline"
                     >
                       Create Account
                     </button>
@@ -400,7 +400,7 @@ export function LoginPage({
                     <button
                       type="button"
                       onClick={() => switchMode('signin')}
-                      className="font-semibold text-[#1DB954] hover:underline"
+                      className="font-semibold text-[var(--accent)] hover:underline"
                     >
                       Sign In
                     </button>

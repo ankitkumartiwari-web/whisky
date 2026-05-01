@@ -1,10 +1,12 @@
-export interface GeniusAnnotation {
+import { isBackendApiAvailable } from './backendAvailability';
+
+export interface MetadataAnnotation {
   fragment: string;
   note: string;
 }
 
-export interface GeniusMetadata {
-  source?: 'genius' | 'spotify-scraper' | 'ytmusic' | 'google';
+export interface SongMetadata {
+  source?: string;
   songId: string;
   title: string;
   fullTitle: string;
@@ -15,16 +17,17 @@ export interface GeniusMetadata {
   songDescription: string;
   albumName: string | null;
   releaseDate: string | null;
-  geniusUrl: string | null;
+  sourceUrl: string | null;
   annotationCount: number;
-  topAnnotations: GeniusAnnotation[];
+  topAnnotations: MetadataAnnotation[];
   genre?: string | null;
   language?: string | null;
   originYear?: number | null;
+  syncedLyrics?: string | null;
 }
 
 interface MetadataResolveResponse {
-  metadata?: GeniusMetadata;
+  metadata?: SongMetadata;
   error?: string;
 }
 
@@ -34,7 +37,12 @@ const METADATA_ENDPOINT_CANDIDATES = [
   'http://localhost:8788/api/metadata/resolve',
 ];
 
-export async function fetchGeniusMetadata(songTitle: string, artistName = '') {
+export async function fetchSongMetadata(songTitle: string, artistName = '') {
+  const backendReady = await isBackendApiAvailable();
+  if (!backendReady) {
+    return { data: null };
+  }
+
   const payload = {
     songTitle,
     artistName,

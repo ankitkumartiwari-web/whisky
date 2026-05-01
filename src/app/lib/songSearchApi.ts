@@ -12,7 +12,37 @@ const SEARCH_ENDPOINT_CANDIDATES = [
   'http://localhost:8788/api/search/songs',
 ];
 
-export async function searchSongsOnline(query: string, limit = 12): Promise<{
+interface CachedSearchEntry {
+  expiresAt: number;
+  result: { data?: Song[]; source?: string; error?: string };
+}
+
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const searchCache = new Map<string, CachedSearchEntry>();
+const inFlight = new Map<string, Promise<{ data?: Song[]; source?: string; error?: string }>>();
+
+export async function searchSongsOnline(query: string, limit = 12, country = ''): Promise<{
+  data?: Song[];
+  source?: string;
+  error?: string;
+}> {
+  const cacheKey = `${(country || '').toLowerCase()}|${query.trim().toLowerCase()}|${limit}`;
+  const cached = searchCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.result;
+  const inflight = inFlight.get(cacheKey);
+  if (inflight) return inflight;
+
+  const promise = (async () => {
+    const result = await runSearchRequest(query, limit, country);
+    searchCache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, result });
+    inFlight.delete(cacheKey);
+    return result;
+  })();
+  inFlight.set(cacheKey, promise);
+  return promise;
+}
+
+async function runSearchRequest(query: string, limit: number, country: string): Promise<{
   data?: Song[];
   source?: string;
   error?: string;
@@ -26,7 +56,7 @@ export async function searchSongsOnline(query: string, limit = 12): Promise<{
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ query, limit }),
+        body: JSON.stringify({ query, limit, country }),
       });
 
       const payload = (await response.json().catch(() => ({}))) as SearchSongsResponse;

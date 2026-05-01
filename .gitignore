@@ -28,3 +28,5 @@ server-8788.out.log
 
 # Misc
 coverage/
+recommender_service/training_data.jsonl
+recommender_service/__pycache__/

@@ -18,6 +18,20 @@ export function WaveformVisualizer({ isPlaying, color = '#FF6B35' }: WaveformVis
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // Canvas can't parse CSS variables. Resolve var(--name) to its computed hex first.
+    const resolveColor = (value: string): string => {
+      const trimmed = value.trim();
+      const match = trimmed.match(/^var\((--[^),\s]+)/);
+      if (!match) return trimmed;
+      try {
+        const computed = getComputedStyle(document.documentElement).getPropertyValue(match[1]).trim();
+        return computed || '#D8A35C';
+      } catch {
+        return '#D8A35C';
+      }
+    };
+    const resolvedColor = resolveColor(color);
+
     // Set canvas size
     const updateSize = () => {
       const dpr = window.devicePixelRatio || 1;
@@ -55,8 +69,8 @@ export function WaveformVisualizer({ isPlaying, color = '#FF6B35' }: WaveformVis
 
         // Create gradient for each bar
         const gradient = ctx.createLinearGradient(x, y, x, y + normalizedHeight);
-        gradient.addColorStop(0, color);
-        gradient.addColorStop(1, `${color}40`);
+        gradient.addColorStop(0, resolvedColor);
+        gradient.addColorStop(1, `${resolvedColor}40`);
 
         ctx.fillStyle = gradient;
         ctx.fillRect(x, y, barWidth - barGap, normalizedHeight);

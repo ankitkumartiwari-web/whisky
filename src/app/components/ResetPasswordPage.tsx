@@ -151,7 +151,7 @@ export function ResetPasswordPage({ onUpdatePassword, onBack, configError }: Res
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="w-full rounded-xl bg-[#1DB954] px-4 py-3 text-sm font-semibold text-[#0A0A0A] transition-colors hover:bg-[#22C55E] disabled:cursor-not-allowed disabled:opacity-70"
+                  className="w-full rounded-xl bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[#0A0A0A] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   {isSubmitting ? 'Updating password...' : 'Update Password'}
                 </button>

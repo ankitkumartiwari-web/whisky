@@ -1,53 +1,56 @@
-import type { Playlist, Song } from '../data/mockData';
-import { buildAICatalogPayload } from '../data/catalogMetadata';
+import type { Song } from '../data/mockData';
+import { isBackendApiAvailable } from './backendAvailability';
 
-export interface AICuratorSuggestion {
-  type: 'song' | 'playlist' | 'album';
-  id: string;
-  reason: string;
+export interface CuratorFact {
+  text: string;
 }
 
-export interface AICuratorResult {
-  intent: string;
+export interface CuratorTrack extends Song {
+  reason?: string;
+}
+
+export interface CuratorPlaylist {
+  name: string;
+  description: string;
+  tracks: CuratorTrack[];
+}
+
+export interface CuratorChatResult {
+  intent: 'facts' | 'playlist' | 'explain' | 'chat' | string;
   responseText: string;
-  suggestions: AICuratorSuggestion[];
-  playlistBuilder: {
-    name: string;
-    description: string;
-    songIds: string[];
-  };
-  rerankedSongIds: string[];
-  details: {
-    songId: string | null;
-    artistName: string | null;
-    originTitle: string | null;
-  } | null;
-  geniusDetails?: {
-    title: string;
-    artistName: string;
-    releaseDate: string | null;
-    geniusUrl: string | null;
-    annotationCount: number;
-  } | null;
+  facts: string[];
+  playlist: CuratorPlaylist | null;
   model?: string;
 }
 
-export async function getAICuratorResult(options: {
+export interface CuratorChatInput {
   prompt: string;
-  songs: Song[];
-  playlists: Playlist[];
-  searchResultSongIds: string[];
-}): Promise<{ data?: AICuratorResult; error?: string }> {
+  currentSong?: Song | null;
+  likedSongs?: Song[];
+  recentSongs?: Song[];
+  preferredLanguages?: string[];
+  responseLanguage?: 'English' | 'Hindi';
+}
+
+export async function chatWithCurator(
+  input: CuratorChatInput,
+): Promise<{ data?: CuratorChatResult; error?: string }> {
   try {
-    const response = await fetch('/api/ai-curator', {
+    const ready = await isBackendApiAvailable();
+    if (!ready) {
+      return { error: 'AI curator is offline right now. Make sure the API server is running.' };
+    }
+
+    const response = await fetch('/api/ai-curator/chat', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        prompt: options.prompt,
-        catalog: buildAICatalogPayload(options.songs, options.playlists),
-        searchResultSongIds: options.searchResultSongIds,
+        prompt: input.prompt,
+        currentSong: input.currentSong ?? null,
+        likedSongs: input.likedSongs ?? [],
+        recentSongs: input.recentSongs ?? [],
+        preferredLanguages: input.preferredLanguages ?? [],
+        responseLanguage: input.responseLanguage ?? 'English',
       }),
     });
 
@@ -57,9 +60,9 @@ export async function getAICuratorResult(options: {
       return { error: message };
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as CuratorChatResult;
     return { data };
   } catch {
-    return { error: 'Unable to reach AI service. Please try again.' };
+    return { error: 'Unable to reach AI curator service.' };
   }
 }

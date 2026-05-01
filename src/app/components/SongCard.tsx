@@ -1,10 +1,11 @@
-import { Play, Heart } from 'lucide-react';
+import { Play, Heart, Download, Check } from 'lucide-react';
 import { Song } from '../data/mockData';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { Skeleton } from 'boneyard-js/react';
 import { Skeleton as UiSkeleton } from './ui/skeleton';
 import { isValidYouTubeVideoId } from '../lib/playerDiagnostics';
+import { isSongSaved, removeSongOffline, saveSongOffline } from '../lib/offlineStore';
 
 interface SongCardProps {
   song: Song;
@@ -16,12 +17,42 @@ interface SongCardProps {
 export function SongCard(props: SongCardProps) {
   const { song, onPlay, onLike, isLoading } = props;
   const [isHovered, setIsHovered] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
+  const [isSavingState, setIsSavingState] = useState<'idle' | 'busy'>('idle');
   const loading = typeof isLoading === 'boolean' ? isLoading : false;
   const isPlayable = isValidYouTubeVideoId(song.videoId);
+
+  useEffect(() => {
+    let cancelled = false;
+    isSongSaved(song.id).then((saved) => {
+      if (!cancelled) setIsSaved(saved);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [song.id]);
 
   const handleLike = (e: React.MouseEvent) => {
     e.stopPropagation();
     onLike?.(song.id);
+  };
+
+  const handleSaveOffline = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (isSavingState === 'busy') return;
+    setIsSavingState('busy');
+    try {
+      if (isSaved) {
+        await removeSongOffline(song.id);
+        setIsSaved(false);
+      } else {
+        await saveSongOffline(song);
+        setIsSaved(true);
+      }
+      window.dispatchEvent(new CustomEvent('whisky:saved-songs-changed'));
+    } finally {
+      setIsSavingState('idle');
+    }
   };
 
   const handlePlay = () => {
@@ -41,10 +72,13 @@ export function SongCard(props: SongCardProps) {
             <UiSkeleton className="w-16 h-16 rounded-full" />
           </div>
         </div>
-        <div className="space-y-2 px-1">
-          <UiSkeleton className="h-4 w-3/4 rounded-md" />
-          <UiSkeleton className="h-3 w-1/2 rounded-md" />
-          <UiSkeleton className="h-3 w-24 rounded-md" />
+        <div className="mt-1 space-y-3 px-1 min-h-[72px] rounded-2xl border border-white/5 bg-white/5 p-3">
+          <UiSkeleton className="h-4 w-11/12 rounded-full bg-white/25 dark:bg-white/25" />
+          <UiSkeleton className="h-3 w-4/5 rounded-full bg-white/18 dark:bg-white/18" />
+          <div className="flex items-center gap-2 pt-1">
+            <UiSkeleton className="h-3 w-20 rounded-full bg-white/14 dark:bg-white/14" />
+            <UiSkeleton className="h-3 w-12 rounded-full bg-white/14 dark:bg-white/14" />
+          </div>
         </div>
       </div>
     );
@@ -86,21 +120,37 @@ export function SongCard(props: SongCardProps) {
               }}
               whileHover={{ scale: 1.1 }}
               transition={{ duration: 0.2 }}
-              title={isPlayable ? 'Play song' : 'This result is not wired to a playable YouTube source yet'}
+              title={isPlayable ? 'Play song' : 'This result is not wired to a playable source yet'}
             >
               <Play className="w-7 h-7 fill-current ml-0.5" />
             </motion.button>
           </motion.div>
-          <motion.button
-            className={`absolute top-4 right-4 transition-all ${
-              song.isLiked ? 'opacity-100 text-accent' : 'opacity-0 group-hover:opacity-100 text-white'
-            }`}
-            onClick={handleLike}
-            whileHover={{ scale: 1.2 }}
-            whileTap={{ scale: 0.9 }}
-          >
-            <Heart className={`w-5 h-5 ${song.isLiked ? 'fill-current' : ''}`} />
-          </motion.button>
+          <div className="absolute top-4 right-4 flex items-center gap-2">
+            <motion.button
+              className={`transition-all ${
+                isSaved
+                  ? 'opacity-100 text-emerald-400'
+                  : 'opacity-0 group-hover:opacity-100 text-white'
+              }`}
+              onClick={handleSaveOffline}
+              whileHover={{ scale: 1.2 }}
+              whileTap={{ scale: 0.9 }}
+              title={isSaved ? 'Remove from offline' : 'Save for offline'}
+              disabled={isSavingState === 'busy'}
+            >
+              {isSaved ? <Check className="w-5 h-5" /> : <Download className="w-5 h-5" />}
+            </motion.button>
+            <motion.button
+              className={`transition-all ${
+                song.isLiked ? 'opacity-100 text-accent' : 'opacity-0 group-hover:opacity-100 text-white'
+              }`}
+              onClick={handleLike}
+              whileHover={{ scale: 1.2 }}
+              whileTap={{ scale: 0.9 }}
+            >
+              <Heart className={`w-5 h-5 ${song.isLiked ? 'fill-current' : ''}`} />
+            </motion.button>
+          </div>
         </div>
         <div className="space-y-1 px-1">
           <h3 className="text-sm truncate">{song.title}</h3>

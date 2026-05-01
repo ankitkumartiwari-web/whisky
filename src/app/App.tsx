@@ -3,24 +3,30 @@ import type { SyntheticEvent } from 'react';
 import type { User } from '@supabase/supabase-js';
 import { ThemeProvider } from './context/ThemeContext';
 import { Sidebar } from './components/Sidebar';
-import { TopNavigation } from './components/TopNavigation';
+import { TopNavigation, type ContentLanguage } from './components/TopNavigation';
 import { SongCard } from './components/SongCard';
 import { PlaylistCard } from './components/PlaylistCard';
 import MusicPlayer from './components/MusicPlayer';
 import ReactPlayer from 'react-player';
+import { MoodView } from './components/MoodView';
 import { MultiUserSession } from './components/MultiUserSession';
 import { AIAssistant } from './components/AIAssistant';
 import { SongDetailsPage } from './components/SongDetailsPage';
 import { CustomCursor } from './components/CustomCursor';
 import { LoginPage } from './components/LoginPage';
+import { OnboardingModal, type OnboardingPreferences } from './components/OnboardingModal';
+import { WidgetManagerPage } from './components/widgets/WidgetManagerPage';
+import { WIDGET_REGISTRY } from './components/widgets/widgetRegistry';
 import { ResetPasswordPage } from './components/ResetPasswordPage';
 import { Skeleton } from './components/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger } from './components/ui/tabs';
 import { Sparkles, Users } from 'lucide-react';
 import { motion, type Variants } from 'motion/react';
 import { supabase, supabaseConfigError } from './lib/supabaseClient';
-import { requestPasswordResetEmail, sendWelcomeEmail } from './lib/resendApi';
+import { logRecommendationEvent, requestPasswordResetEmail, sendWelcomeEmail } from './lib/resendApi';
 import { searchSongsOnline } from './lib/songSearchApi';
-import { getRecommendations } from './lib/recommendationApi';
+import { useOfflineStatus } from './lib/useOfflineStatus';
+import { buildSeedQueries, buildUserProfile, rankAndDiversify } from './lib/recommendationEngine';
 import { isValidYouTubeVideoId } from './lib/playerDiagnostics';
 import { getArtistMetadata, getSongMetadata } from './data/catalogMetadata';
 import {
@@ -52,41 +58,30 @@ function clearRecoveryParamsFromUrl() {
 
 const STORAGE_KEYS = {
   activeMenuItem: 'whisky-active-menu-item',
-  searchQuery: 'whisky-search-query',
   likedSongIds: 'whisky-liked-song-ids',
+  onboardingPrefs: 'whisky-onboarding-prefs',
+  activeWidgets: 'whisky-active-widgets',
+  contentLanguage: 'whisky-content-language',
+  volume: 'whisky-volume',
 } as const;
 
-const VALID_MENU_ITEMS = new Set([
-  'home', 'search', 'library', 'playlists', 'liked', 'ai-dj', 'mood', 'multiuser',
-]);
-
-function getStoredActiveMenuItem(): string {
-  const value = window.localStorage.getItem(STORAGE_KEYS.activeMenuItem);
-  return value && VALID_MENU_ITEMS.has(value) ? value : 'home';
+function getStoredVolume(): number {
+  const raw = window.localStorage.getItem(STORAGE_KEYS.volume);
+  if (raw === null) return 70;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) return 70;
+  return Math.max(0, Math.min(100, parsed));
 }
 
-function getStoredSearchQuery(): string {
-  return window.localStorage.getItem(STORAGE_KEYS.searchQuery) ?? '';
+function getStoredContentLanguage(): ContentLanguage {
+  const value = window.localStorage.getItem(STORAGE_KEYS.contentLanguage);
+  return value === 'Hindi' ? 'Hindi' : 'English';
 }
 
-function getStoredLikedSongIds(): Set<string> {
-  const fallback = new Set(mockSongs.filter((song) => song.isLiked).map((song) => song.id));
-  const raw = window.localStorage.getItem(STORAGE_KEYS.likedSongIds);
-  if (!raw) return fallback;
+function getStoredActiveWidgets(): string[] {
   try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return fallback;
-    const validIds = new Set(mockSongs.map((song) => song.id));
-    return new Set(parsed.filter((id) => typeof id === 'string' && validIds.has(id)));
-  } catch {
-    return fallback;
-  }
-}
-
-function getStoredRecentSongIds(): string[] {
-  const raw = window.localStorage.getItem('whisky-recent-song-ids');
-  if (!raw) return [];
-  try {
+    const raw = window.localStorage.getItem(STORAGE_KEYS.activeWidgets);
+    if (!raw) return ['now-playing', 'recent-plays'];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed.filter((id) => typeof id === 'string');
@@ -95,7 +90,69 @@ function getStoredRecentSongIds(): string[] {
   }
 }
 
+function getStoredOnboardingPrefs(): OnboardingPreferences | null {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEYS.onboardingPrefs);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed as OnboardingPreferences;
+  } catch {
+    return null;
+  }
+}
+
+const VALID_MENU_ITEMS = new Set([
+  'home', 'search', 'library', 'playlists', 'ai-dj', 'mood', 'multiuser',
+]);
+
+function getStoredActiveMenuItem(): string {
+  const value = window.localStorage.getItem(STORAGE_KEYS.activeMenuItem);
+  const normalized = value === 'liked' ? 'library' : value;
+  return normalized && VALID_MENU_ITEMS.has(normalized) ? normalized : 'home';
+}
+
+function getStoredLibraryTab(): 'played' | 'liked' {
+  const value = window.localStorage.getItem(STORAGE_KEYS.activeMenuItem);
+  return value === 'liked' ? 'liked' : 'played';
+}
+
+function getStoredLikedSongIds(): Set<string> {
+  const raw = window.localStorage.getItem(STORAGE_KEYS.likedSongIds);
+  if (!raw) return new Set<string>();
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set<string>();
+    return new Set(parsed.filter((id) => typeof id === 'string'));
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function getStoredRecentSongs(): Song[] {
+  const raw = window.localStorage.getItem('whisky-recent-songs');
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (entry) =>
+        entry && typeof entry === 'object' && typeof entry.id === 'string' && typeof entry.title === 'string',
+    ) as Song[];
+  } catch {
+    return [];
+  }
+}
+
+const RECENT_SONGS_LIMIT = 60;
+
+function pushRecentSong(list: Song[], song: Song): Song[] {
+  const filtered = list.filter((entry) => entry.id !== song.id);
+  return [song, ...filtered].slice(0, RECENT_SONGS_LIMIT);
+}
+
 function AppContent() {
+  const isOffline = useOfflineStatus();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isPasswordRecoveryMode, setIsPasswordRecoveryMode] = useState(isPasswordRecoveryRequest);
@@ -104,25 +161,65 @@ function AppContent() {
   const [activeMenuItem, setActiveMenuItem] = useState(getStoredActiveMenuItem);
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
+  const [, setCurrentTime] = useState(0);
   const [currentSongIndex, setCurrentSongIndex] = useState(0);
   const [isAIAssistantOpen, setIsAIAssistantOpen] = useState(false);
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [volume, setVolume] = useState(70); // 0-100
-  const [searchQuery, setSearchQuery] = useState(getStoredSearchQuery);
+  const [volume, setVolume] = useState<number>(getStoredVolume);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.volume, String(volume));
+  }, [volume]);
+  const [repeatMode, setRepeatMode] = useState<'off' | 'one' | 'all'>('off');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [libraryTab, setLibraryTab] = useState<'played' | 'liked'>(getStoredLibraryTab);
   const [likedSongIds, setLikedSongIds] = useState<Set<string>>(getStoredLikedSongIds);
-  const [recentlyPlayedIds, setRecentlyPlayedIds] = useState<string[]>(getStoredRecentSongIds);
-  const [aiRecommendedSongIds, setAiRecommendedSongIds] = useState<string[]>([]);
+  const [recentlyPlayedSongs, setRecentlyPlayedSongs] = useState<Song[]>(getStoredRecentSongs);
+  const recentlyPlayedIds = useMemo(() => recentlyPlayedSongs.map((song) => song.id), [recentlyPlayedSongs]);
+  const [aiRecommendedSongs, setAiRecommendedSongs] = useState<Song[]>([]);
   const [aiRecommendationError, setAiRecommendationError] = useState('');
   const [isRecommendationLoading, setIsRecommendationLoading] = useState(false);
   const [aiRerankedSongIds, setAiRerankedSongIds] = useState<string[]>([]);
   const [onlineSearchSongs, setOnlineSearchSongs] = useState<Song[]>([]);
-  const [onlineSearchSource, setOnlineSearchSource] = useState<string>('none');
   const [isOnlineSearchLoading, setIsOnlineSearchLoading] = useState(false);
   const [onlineSearchError, setOnlineSearchError] = useState('');
   const [playbackNotice, setPlaybackNotice] = useState('');
-  const playerRef = useRef<HTMLVideoElement | null>(null);
+  const [onboardingPrefs, setOnboardingPrefs] = useState<OnboardingPreferences | null>(getStoredOnboardingPrefs);
+  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
+  const [contentLanguage, setContentLanguage] = useState<ContentLanguage>(getStoredContentLanguage);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.contentLanguage, contentLanguage);
+  }, [contentLanguage]);
+
+  const effectiveLanguages = useMemo<string[]>(() => {
+    const others = (onboardingPrefs?.languages ?? []).filter((lang) => lang !== contentLanguage);
+    return [contentLanguage, ...others];
+  }, [contentLanguage, onboardingPrefs?.languages]);
+
+  const [activeWidgetIds, setActiveWidgetIds] = useState<string[]>(getStoredActiveWidgets);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.activeWidgets, JSON.stringify(activeWidgetIds));
+  }, [activeWidgetIds]);
+
+  const handleToggleWidgetWithRedirect = (id: string) => {
+    setActiveWidgetIds((prev) => {
+      const isAdding = !prev.includes(id);
+      const next = isAdding ? [...prev, id] : prev.filter((entry) => entry !== id);
+      if (!isAdding && activeMenuItem === id) setActiveMenuItem('home');
+      return next;
+    });
+  };
+
+  const handleSelectMoodFromWidget = (moodId: string) => {
+    setActiveMenuItem('mood');
+    window.localStorage.setItem('whisky-mood-preselect', moodId);
+  };
+  const playerRef = useRef<any>(null);
+  const repeatOneUsedRef = useRef(false);
+  const songEndFiredRef = useRef<string | null>(null);
   // For YouTube embed API, always set origin for best compatibility
   const youtubeOrigin = typeof window !== 'undefined' ? window.location.origin : '';
   // NOTE: For maximum compatibility, ReactPlayer is always mounted, never display:none, and playback is user-triggered on mobile due to browser autoplay policies.
@@ -130,30 +227,60 @@ function AppContent() {
   const applyLikedState = (songs: Song[]): Song[] =>
     songs.map((song) => ({ ...song, isLiked: likedSongIds.has(song.id) }));
 
+  const uniqueSongsById = (songs: Song[]) => Array.from(new Map(songs.map((song) => [song.id, song] as const)).values());
+
   const allSongs = useMemo(() => applyLikedState(mockSongs), [likedSongIds]);
-  const aiRecommendedSongs = useMemo(
-    () => aiRecommendedSongIds
-      .map((id) => allSongs.find((song) => song.id === id))
-      .filter((song): song is Song => Boolean(song)),
-    [aiRecommendedSongIds, allSongs],
+  const recommendedSongsView = useMemo(() => uniqueSongsById(aiRecommendedSongs), [aiRecommendedSongs]);
+  const playedSongsView = useMemo(
+    () => recentlyPlayedSongs.map((song) => ({ ...song, isLiked: likedSongIds.has(song.id) })),
+    [recentlyPlayedSongs, likedSongIds],
   );
-  const recommendedSongsView = aiRecommendedSongs;
-  const recentlyPlayedView = useMemo(() => {
-    if (!currentSong) return [];
-    return applyLikedState([currentSong]);
-  }, [likedSongIds, currentSong]);
-  const trendingSongsView = useMemo(() => [], []);
+  const lastSessionSongsView = useMemo(() => playedSongsView.slice(0, 6), [playedSongsView]);
+
+  const candidatePool = useMemo(
+    () => uniqueSongsById([...allSongs, ...aiRecommendedSongs, ...onlineSearchSongs]),
+    [allSongs, aiRecommendedSongs, onlineSearchSongs],
+  );
+
+  const songDirectoryRef = useRef<Map<string, Song>>(new Map());
+  useEffect(() => {
+    candidatePool.forEach((song) => songDirectoryRef.current.set(song.id, song));
+    if (currentSong) songDirectoryRef.current.set(currentSong.id, currentSong);
+  }, [candidatePool, currentSong]);
+
+  useEffect(() => {
+    repeatOneUsedRef.current = false;
+  }, [currentSong?.id]);
 
   const pickSmartNextSong = (current: Song | null): Song | null => {
     if (!current) return null;
 
     const currentSongMeta = getSongMetadata(current.id);
     const currentArtistMeta = getArtistMetadata(current.artist);
-    const candidates = allSongs.filter((song) => song.id !== current.id && isValidYouTubeVideoId(song.videoId));
+    const candidates = candidatePool.filter((song) => song.id !== current.id && isValidYouTubeVideoId(song.videoId));
+    const currentLanguage = currentSongMeta?.language;
+    const currentGenre = currentSongMeta?.genre;
+    const currentArtist = current.artist;
+    const sameLanguageCandidates = currentLanguage
+      ? candidates.filter((song) => getSongMetadata(song.id)?.language === currentLanguage)
+      : [];
+    const sameArtistOrGenreCandidates = candidates.filter((song) => {
+      const songMeta = getSongMetadata(song.id);
+      return Boolean(
+        (currentArtist && song.artist === currentArtist)
+          || (currentGenre && songMeta?.genre === currentGenre)
+          || (currentLanguage && songMeta?.language === currentLanguage)
+      );
+    });
+    const narrowedCandidates = sameLanguageCandidates.length > 0
+      ? sameLanguageCandidates
+      : sameArtistOrGenreCandidates.length > 0
+        ? sameArtistOrGenreCandidates
+        : candidates;
 
-    if (candidates.length === 0) return null;
+    if (narrowedCandidates.length === 0) return null;
 
-    const scored = candidates
+    const scored = narrowedCandidates
       .map((song) => {
         const songMeta = getSongMetadata(song.id);
         const artistMeta = getArtistMetadata(song.artist);
@@ -178,8 +305,22 @@ function AppContent() {
       })
       .sort((a, b) => b.score - a.score);
 
-    return scored[0]?.score > 0 ? scored[0].song : candidates[0];
+    return scored[0]?.score > 0 ? scored[0].song : narrowedCandidates[0];
   };
+
+  const queuePreviewSongs = useMemo(() => {
+    const queue: Song[] = [];
+    let cursor = currentSong;
+
+    for (let i = 0; i < 3; i += 1) {
+      const nextSong = cursor ? pickSmartNextSong(cursor) : null;
+      if (!nextSong) break;
+      queue.push(nextSong);
+      cursor = nextSong;
+    }
+
+    return queue;
+  }, [currentSong, candidatePool]);
 
   const handlePlaySong = (song: Song) => {
     if (!song.videoId || song.videoId.length !== 11) {
@@ -195,11 +336,16 @@ function AppContent() {
     setIsPlaying(true);
     setProgress(0);
     setCurrentTime(0);
-    const index = mockSongs.findIndex((s) => s.id === song.id);
-    if (index !== -1) setCurrentSongIndex(index);
-    setRecentlyPlayedIds((prev) => {
-      const next = [song.id, ...prev.filter((id) => id !== song.id)];
-      return next.slice(0, 6);
+    const index = candidatePool.findIndex((s) => s.id === song.id);
+    setCurrentSongIndex(index !== -1 ? index : -1);
+    repeatOneUsedRef.current = false;
+    setRecentlyPlayedSongs((prev) => pushRecentSong(prev, song));
+    void logRecommendationEvent({
+      eventType: 'play',
+      songId: song.id,
+      likedSongIds: [...likedSongIds],
+      recentlyPlayedIds: [song.id, ...recentlyPlayedIds.filter((id) => id !== song.id)].slice(0, 6),
+      currentSongId: song.id,
     });
   };
 
@@ -215,26 +361,85 @@ function AppContent() {
     setIsPlaying(!isPlaying);
   };
 
-  const handleNext = () => {
-    const nextSong = pickSmartNextSong(currentSong) ?? allSongs[(currentSongIndex + 1) % mockSongs.length];
-    const nextIndex = mockSongs.findIndex((song) => song.id === nextSong?.id);
-    if (nextIndex !== -1) setCurrentSongIndex(nextIndex);
+  const handleNext = async () => {
+    const fallback = candidatePool[(currentSongIndex + 1) % Math.max(candidatePool.length, 1)] ?? null;
+    let nextSong: Song | null = pickSmartNextSong(currentSong) ?? fallback ?? null;
+
+    if (!nextSong && currentSong?.artist) {
+      const result = await searchSongsOnline(currentSong.artist, 6, currentSong.country?.toLowerCase().slice(0, 2) ?? '');
+      const candidates = (result.data ?? []).filter(
+        (song) => song.id !== currentSong.id && song.videoId && song.videoId.length === 11,
+      );
+      if (candidates.length > 0) {
+        nextSong = candidates[Math.floor(Math.random() * candidates.length)];
+      }
+    }
+
+    if (!nextSong) return;
+
+    const nextIndex = candidatePool.findIndex((song) => song.id === nextSong!.id);
+    setCurrentSongIndex(nextIndex !== -1 ? nextIndex : -1);
     setCurrentSong(nextSong);
     setIsPlaying(true);
     setProgress(0);
     setCurrentTime(0);
     setPlaybackNotice('');
+    repeatOneUsedRef.current = false;
+    setRecentlyPlayedSongs((prev) => pushRecentSong(prev, nextSong!));
   };
 
   // For ReactPlayer onEnd
   const playNext = () => {
+    if (!currentSong) return;
+
+    if (repeatMode === 'one' && !repeatOneUsedRef.current) {
+      repeatOneUsedRef.current = true;
+      setIsPlaying(true);
+      setProgress(0);
+      setCurrentTime(0);
+      const player = playerRef.current;
+      if (player?.seekTo) {
+        player.seekTo(0, 'seconds');
+      } else if (typeof player?.currentTime === 'number') {
+        player.currentTime = 0;
+      }
+      return;
+    }
+
+    if (repeatMode === 'all') {
+      setIsPlaying(true);
+      setProgress(0);
+      setCurrentTime(0);
+      setPlaybackNotice('');
+      const player = playerRef.current;
+      if (player?.seekTo) {
+        player.seekTo(0, 'seconds');
+      } else if (typeof player?.currentTime === 'number') {
+        player.currentTime = 0;
+      }
+      return;
+    }
+
     handleNext();
+  };
+
+  const handleRepeatModeChange = () => {
+    setRepeatMode((prev) => (prev === 'off' ? 'one' : prev === 'one' ? 'all' : 'off'));
+    repeatOneUsedRef.current = false;
   };
 
   const handlePlayerProgress = (seconds: number) => {
     setCurrentTime(seconds);
     if (currentSong?.duration) {
       setProgress(Math.min(100, (seconds / currentSong.duration) * 100));
+      if (
+        currentSong.duration > 0 &&
+        seconds >= currentSong.duration - 0.4 &&
+        songEndFiredRef.current !== currentSong.id
+      ) {
+        songEndFiredRef.current = currentSong.id;
+        playNext();
+      }
     } else {
       setProgress(0);
     }
@@ -254,35 +459,57 @@ function AppContent() {
 
     const nextTime = (newProgress / 100) * currentSong.duration;
     setCurrentTime(nextTime);
-    if (playerRef.current) {
+    if (playerRef.current?.seekTo) {
+      playerRef.current.seekTo(nextTime, 'seconds');
+    } else if (playerRef.current && typeof playerRef.current.currentTime === 'number') {
       playerRef.current.currentTime = nextTime;
     }
   };
 
   const handlePrevious = () => {
-    const prevIndex = currentSongIndex === 0 ? mockSongs.length - 1 : currentSongIndex - 1;
+    if (recentlyPlayedSongs.length > 1) {
+      const previousSong = recentlyPlayedSongs[1];
+      const idx = candidatePool.findIndex((song) => song.id === previousSong.id);
+      setCurrentSongIndex(idx);
+      setCurrentSong(previousSong);
+      setIsPlaying(true);
+      setProgress(0);
+      setCurrentTime(0);
+      setPlaybackNotice('');
+      repeatOneUsedRef.current = false;
+      setRecentlyPlayedSongs((prev) => pushRecentSong(prev, previousSong));
+      return;
+    }
+    const pool = candidatePool;
+    if (pool.length === 0) return;
+    const prevIndex = currentSongIndex <= 0 ? pool.length - 1 : currentSongIndex - 1;
     setCurrentSongIndex(prevIndex);
-    setCurrentSong(allSongs[prevIndex]);
+    setCurrentSong(pool[prevIndex]);
     setIsPlaying(true);
     setProgress(0);
     setCurrentTime(0);
     setPlaybackNotice('');
+    repeatOneUsedRef.current = false;
   };
 
   const handleLikeSong = (songId: string) => {
-    setLikedSongIds((previous) => {
-      const next = new Set(previous);
-      next.has(songId) ? next.delete(songId) : next.add(songId);
-      return next;
-    });
+    const nextLikedSet = new Set(likedSongIds);
+    nextLikedSet.has(songId) ? nextLikedSet.delete(songId) : nextLikedSet.add(songId);
+    const nextLikedIds = [...nextLikedSet];
+    setLikedSongIds(nextLikedSet);
     setCurrentSong((previous) => {
       if (!previous || previous.id !== songId) return previous;
       return { ...previous, isLiked: !previous.isLiked };
     });
+    void logRecommendationEvent({
+      eventType: 'like',
+      songId,
+      likedSongIds: nextLikedIds.length > 0 ? nextLikedIds : [...likedSongIds],
+      recentlyPlayedIds,
+      currentSongId: currentSong?.id ?? null,
+    });
   };
 
-  const moodPlaylists = mockPlaylists.slice(0, 4);
-  const aiPlaylists = mockPlaylists.slice(4, 6);
   const likedSongsView = allSongs.filter((song) => song.isLiked);
 
   const normalizedSearch = searchQuery.trim().toLowerCase();
@@ -301,11 +528,9 @@ function AppContent() {
     );
   };
 
-  const filteredRecentlyPlayed = filterSongs(recentlyPlayedView);
+  const filteredRecentlyPlayed = filterSongs(lastSessionSongsView);
   const filteredLikedSongs = filterSongs(likedSongsView);
   const filteredAllSongs = filterSongs(allSongs);
-  const filteredMoodPlaylists = filterPlaylists(moodPlaylists);
-  const filteredAiPlaylists = filterPlaylists(aiPlaylists);
   const filteredAllPlaylists = filterPlaylists(mockPlaylists);
 
   const mergedSearchSongs = useMemo(() => {
@@ -319,7 +544,7 @@ function AppContent() {
       seen.add(key);
       return true;
     });
-    return [...filteredAllSongs, ...external];
+    return uniqueSongsById([...filteredAllSongs, ...external]);
   }, [filteredAllSongs, onlineSearchSongs, normalizedSearch]);
 
   const searchSongsForView = useMemo(() => {
@@ -328,9 +553,12 @@ function AppContent() {
     const ranked: Song[] = [];
     aiRerankedSongIds.forEach((songId) => {
       const match = map.get(songId);
-      if (match) { ranked.push(match); map.delete(songId); }
+      if (match) {
+        ranked.push(match);
+        map.delete(songId);
+      }
     });
-    return [...ranked, ...Array.from(map.values())];
+    return Array.from(new Map([...ranked, ...Array.from(map.values())].map((song) => [song.id, song] as const)).values());
   }, [aiRerankedSongIds, mergedSearchSongs]);
 
   const containerVariants: Variants = {
@@ -374,7 +602,6 @@ function AppContent() {
   useEffect(() => {
     if (!normalizedSearch) {
       setOnlineSearchSongs([]);
-      setOnlineSearchSource('none');
       setOnlineSearchError('');
       setIsOnlineSearchLoading(false);
       return;
@@ -387,13 +614,11 @@ function AppContent() {
         if (!isMounted) return;
         if (result.error) {
           setOnlineSearchSongs([]);
-          setOnlineSearchSource('none');
           setOnlineSearchError(result.error);
           setIsOnlineSearchLoading(false);
           return;
         }
         setOnlineSearchSongs(result.data ?? []);
-        setOnlineSearchSource(result.source ?? 'none');
         setOnlineSearchError('');
         setIsOnlineSearchLoading(false);
       });
@@ -402,28 +627,53 @@ function AppContent() {
   }, [normalizedSearch, searchQuery]);
 
   useEffect(() => {
-    if (normalizedSearch && activeMenuItem !== 'search') setActiveMenuItem('search');
-  }, [normalizedSearch, activeMenuItem]);
-
-  useEffect(() => {
     window.localStorage.setItem(STORAGE_KEYS.activeMenuItem, activeMenuItem);
   }, [activeMenuItem]);
 
+  const handleSearchChange = (value: string) => {
+    setSearchQuery(value);
+    if (value.trim().length > 0 && activeMenuItem !== 'search') {
+      setActiveMenuItem('search');
+    } else if (value.trim().length === 0 && activeMenuItem === 'search') {
+      setActiveMenuItem('home');
+    }
+  };
+
   useEffect(() => {
-    window.localStorage.setItem(STORAGE_KEYS.searchQuery, searchQuery);
-  }, [searchQuery]);
+    if (!isAuthenticated || isAuthLoading || isPasswordRecoveryMode) return;
+    if (!onboardingPrefs) {
+      setIsOnboardingOpen(true);
+    }
+  }, [isAuthenticated, isAuthLoading, isPasswordRecoveryMode, onboardingPrefs]);
+
+  const handleOnboardingComplete = (prefs: OnboardingPreferences) => {
+    window.localStorage.setItem(STORAGE_KEYS.onboardingPrefs, JSON.stringify(prefs));
+    setOnboardingPrefs(prefs);
+    setIsOnboardingOpen(false);
+  };
+
+  const handleOnboardingSkip = () => {
+    setIsOnboardingOpen(false);
+  };
+
+  const handleMenuChange = (item: string) => {
+    if (item !== 'search' && searchQuery.trim().length > 0) {
+      setSearchQuery('');
+    }
+    setActiveMenuItem(item);
+  };
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEYS.likedSongIds, JSON.stringify([...likedSongIds]));
   }, [likedSongIds]);
 
   useEffect(() => {
-    window.localStorage.setItem('whisky-recent-song-ids', JSON.stringify(recentlyPlayedIds));
-  }, [recentlyPlayedIds]);
+    window.localStorage.setItem('whisky-recent-songs', JSON.stringify(recentlyPlayedSongs));
+  }, [recentlyPlayedSongs]);
 
   useEffect(() => {
-    if (!recentlyPlayedIds.length && likedSongIds.size === 0 && !currentSong) {
-      setAiRecommendedSongIds([]);
+    if (!onboardingPrefs) {
+      setAiRecommendedSongs([]);
       setAiRecommendationError('');
       setIsRecommendationLoading(false);
       return;
@@ -433,31 +683,65 @@ function AppContent() {
     setIsRecommendationLoading(true);
     setAiRecommendationError('');
 
-    getRecommendations({
-      songs: allSongs,
-      playlists: mockPlaylists,
-      likedSongIds: [...likedSongIds],
-      recentlyPlayedIds,
-      currentSongId: currentSong?.id ?? null,
-      limit: 8,
-    }).then((result) => {
-      if (!isMounted) return;
-      if (result.error || !result.data) {
-        setAiRecommendedSongIds([]);
-        setAiRecommendationError(result.error ?? 'Unable to generate recommendations.');
+    const handle = window.setTimeout(() => {
+      const directory = songDirectoryRef.current;
+      const likedSongs = Array.from(likedSongIds)
+        .map((id) => directory.get(id))
+        .filter((song): song is Song => Boolean(song));
+      const recentSongs = recentlyPlayedIds
+        .map((id) => directory.get(id))
+        .filter((song): song is Song => Boolean(song));
+
+      const profile = buildUserProfile({
+        prefs: onboardingPrefs,
+        likedSongs,
+        recentSongs,
+        currentSong,
+      });
+      const seeds = buildSeedQueries(profile).slice(0, 6);
+      if (seeds.length === 0) {
+        setAiRecommendedSongs([]);
         setIsRecommendationLoading(false);
         return;
       }
 
-      setAiRecommendedSongIds(result.data.songIds.filter((id) => id !== currentSong?.id));
-      setAiRecommendationError('');
-      setIsRecommendationLoading(false);
-    });
+      const collected: Song[] = [];
+      const seenIds = new Set<string>();
+      let firstShown = false;
+
+      const tasks = seeds.map(({ query, country }) =>
+        searchSongsOnline(query, 3, country)
+          .then((res) => {
+            if (!isMounted) return;
+            (res.data ?? []).forEach((song) => {
+              if (seenIds.has(song.id)) return;
+              seenIds.add(song.id);
+              collected.push(song);
+            });
+            const ranked = rankAndDiversify(collected, profile, 12);
+            setAiRecommendedSongs(ranked);
+            if (!firstShown && ranked.length > 0) {
+              firstShown = true;
+              setIsRecommendationLoading(false);
+            }
+          })
+          .catch(() => {}),
+      );
+
+      Promise.all(tasks).then(() => {
+        if (!isMounted) return;
+        setIsRecommendationLoading(false);
+        if (collected.length === 0) {
+          setAiRecommendationError('Could not find tracks for your preferences yet.');
+        }
+      });
+    }, 350);
 
     return () => {
       isMounted = false;
+      window.clearTimeout(handle);
     };
-  }, [allSongs, currentSong, likedSongIds, recentlyPlayedIds]);
+  }, [onboardingPrefs, currentSong?.id, likedSongIds, recentlyPlayedIds]);
 
   const handleSignIn = async (email: string, password: string) => {
     if (!supabase) return { error: supabaseConfigError ?? 'Supabase is not configured.' };
@@ -514,7 +798,6 @@ function AppContent() {
     search: 'Search',
     library: 'Library',
     playlists: 'Playlists',
-    liked: 'Favorites',
     'ai-dj': 'Live',
     mood: 'Mood Music',
   };
@@ -524,7 +807,6 @@ function AppContent() {
     search: 'Find Your Next Track',
     library: 'Your Music Library',
     playlists: 'Your Playlists',
-    liked: 'Songs You Like',
     'ai-dj': 'Live Listening Session',
     mood: 'Music by Mood',
   };
@@ -576,22 +858,6 @@ function AppContent() {
     );
   };
 
-  const renderPlaylistSkeletonGrid = (count = 4) => (
-    <div className="grid grid-cols-4 gap-10">
-      {Array.from({ length: count }).map((_, idx) => (
-        <motion.div key={`playlist-skeleton-${idx}`} variants={itemVariants}>
-          <div className="space-y-4">
-            <Skeleton className="aspect-square w-full rounded-3xl" />
-            <div className="space-y-2 px-1">
-              <Skeleton className="h-4 w-3/4" />
-              <Skeleton className="h-3 w-1/2" />
-            </div>
-          </div>
-        </motion.div>
-      ))}
-    </div>
-  );
-
   if (isAuthLoading) {
     return (
       <div className="min-h-screen bg-background text-foreground flex items-center justify-center px-6">
@@ -640,7 +906,18 @@ function AppContent() {
   return (
     <div className="min-h-screen bg-background text-foreground overflow-x-hidden">
       <CustomCursor />
-      <Sidebar activeItem={activeMenuItem} onItemClick={setActiveMenuItem} />
+      {isOffline && (
+        <div className="fixed left-20 right-0 top-0 z-[90] flex items-center justify-center gap-2 bg-amber-500/90 px-4 py-1.5 text-xs font-medium text-amber-950">
+          You are offline. Browsing your downloads — audio playback needs internet.
+        </div>
+      )}
+      <Sidebar
+        activeItem={activeMenuItem}
+        onItemClick={handleMenuChange}
+        onAddWidget={() => setActiveMenuItem('manage-widgets')}
+        onRemoveWidget={handleToggleWidgetWithRedirect}
+        activeWidgetIds={activeWidgetIds}
+      />
       {/* Hidden global ReactPlayer keeps playback state and progress in sync. */}
       <div
         style={
@@ -667,7 +944,7 @@ function AppContent() {
           volume={volume / 100}
           onEnded={playNext}
           onError={() => {
-            setPlaybackNotice('YouTube playback failed.');
+            setPlaybackNotice('Playback failed.');
           }}
           onTimeUpdate={handleReactPlayerTimeUpdate}
           config={{
@@ -683,10 +960,10 @@ function AppContent() {
       <TopNavigation
         displayName={displayName}
         searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
+        onSearchChange={handleSearchChange}
       />
 
-      <main className="ml-20 pt-28 pb-40 px-12">
+      <main className="pt-40 pb-40 px-12 ml-20">
         <div className="max-w-[1800px] mx-auto">
           <motion.div
             className="mb-24"
@@ -719,7 +996,7 @@ function AppContent() {
               <motion.section className="mb-24" variants={containerVariants} initial="hidden" animate="visible">
                 <motion.div className="mb-10" variants={itemVariants}>
                   <p className="text-xs text-muted-foreground mb-2 tracking-[0.2em] uppercase">For You</p>
-                  <h2 className="text-4xl tracking-tight">ML Recommendations</h2>
+                  <h2 className="text-4xl tracking-tight">Recommended Songs</h2>
                   {aiRecommendationError && (
                     <p className="text-xs mt-2 text-amber-400">{aiRecommendationError}</p>
                   )}
@@ -733,10 +1010,10 @@ function AppContent() {
 
               <motion.section className="mb-32" variants={containerVariants} initial="hidden" animate="visible">
                 <motion.div className="mb-10" variants={itemVariants}>
-                  <p className="text-xs text-muted-foreground mb-2 tracking-[0.2em] uppercase">Now Playing</p>
-                  <h2 className="text-4xl tracking-tight">Current Song</h2>
+                  <p className="text-xs text-muted-foreground mb-2 tracking-[0.2em] uppercase">History</p>
+                  <h2 className="text-4xl tracking-tight">Last Sessions</h2>
                 </motion.div>
-                {renderSongsGrid(recentlyPlayedView, 'No song is currently playing. Start a track to see it here.')}
+                {renderSongsGrid(filteredRecentlyPlayed, 'Play a few songs to build your session history.')}
               </motion.section>
             </>
           )}
@@ -747,14 +1024,11 @@ function AppContent() {
                 <h2 className="text-4xl tracking-tight">Search Results</h2>
                 <p className="text-sm mt-3 text-muted-foreground">
                   {normalizedSearch
-                    ? `Showing matches for "${searchQuery}"`
-                    : 'Type in the search bar to find songs and playlists.'}
+                    ? `Showing songs that match "${searchQuery}"`
+                    : 'Type in the search bar to find songs.'}
                 </p>
                 {normalizedSearch && isOnlineSearchLoading && (
                   <p className="text-xs mt-2 text-muted-foreground">Searching online songs...</p>
-                )}
-                {normalizedSearch && !isOnlineSearchLoading && onlineSearchSource !== 'none' && (
-                  <p className="text-xs mt-2 text-muted-foreground">Online source: {onlineSearchSource}</p>
                 )}
                 {onlineSearchError && (
                   <p className="text-xs mt-2 text-destructive">{onlineSearchError}</p>
@@ -763,34 +1037,36 @@ function AppContent() {
                   <p className="text-xs mt-2 text-amber-400">{playbackNotice}</p>
                 )}
               </motion.div>
-              <motion.div className="mb-12" variants={itemVariants}>
-                <h3 className="text-2xl mb-6 tracking-tight">Songs</h3>
-                {renderSongsGrid(searchSongsForView, 'No songs found for this search.', isOnlineSearchLoading)}
-              </motion.div>
               <motion.div variants={itemVariants}>
-                <h3 className="text-2xl mb-6 tracking-tight">Playlists</h3>
-                {normalizedSearch && isOnlineSearchLoading
-                  ? renderPlaylistSkeletonGrid()
-                  : renderPlaylistsGrid(filteredAllPlaylists, 'No playlists found for this search.')}
+                {renderSongsGrid(
+                  searchSongsForView,
+                  normalizedSearch ? 'No songs found for this search.' : 'Type a song, artist, or album to begin.',
+                  normalizedSearch ? isOnlineSearchLoading : false,
+                )}
               </motion.div>
             </motion.section>
           )}
 
           {activeMenuItem === 'library' && (
-            <>
-              <motion.section className="mb-20" variants={containerVariants} initial="hidden" animate="visible">
-                <motion.div className="mb-10" variants={itemVariants}>
-                  <h2 className="text-4xl tracking-tight">Recently Played</h2>
-                </motion.div>
-                {renderSongsGrid(filteredRecentlyPlayed, 'No recent songs available right now.')}
-              </motion.section>
-              <motion.section className="mb-20" variants={containerVariants} initial="hidden" animate="visible">
-                <motion.div className="mb-10" variants={itemVariants}>
-                  <h2 className="text-4xl tracking-tight">Your Playlists</h2>
-                </motion.div>
-                {renderPlaylistsGrid(filteredAllPlaylists, 'No playlists available right now.')}
-              </motion.section>
-            </>
+            <motion.section className="mb-20" variants={containerVariants} initial="hidden" animate="visible">
+              <motion.div className="mb-10" variants={itemVariants}>
+                <div className="flex flex-col gap-6">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Library</p>
+                    <h2 className="text-4xl tracking-tight">Your Library</h2>
+                  </div>
+                  <Tabs value={libraryTab} onValueChange={(value) => setLibraryTab(value as 'played' | 'liked')}>
+                    <TabsList className="max-w-md">
+                      <TabsTrigger value="played">Played</TabsTrigger>
+                      <TabsTrigger value="liked">Liked</TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                </div>
+              </motion.div>
+              {libraryTab === 'played'
+                ? renderSongsGrid(playedSongsView, 'Play a song and it will show up here.')
+                : renderSongsGrid(filteredLikedSongs, 'You have no liked songs yet.')}
+            </motion.section>
           )}
 
           {activeMenuItem === 'playlists' && (
@@ -802,25 +1078,18 @@ function AppContent() {
             </motion.section>
           )}
 
-          {activeMenuItem === 'liked' && (
-            <motion.section className="mb-20" variants={containerVariants} initial="hidden" animate="visible">
-              <motion.div className="mb-10" variants={itemVariants}>
-                <h2 className="text-4xl tracking-tight">Liked Songs</h2>
-              </motion.div>
-              {renderSongsGrid(filteredLikedSongs, 'You have no liked songs yet.')}
-            </motion.section>
-          )}
-
           {activeMenuItem === 'mood' && (
             <motion.section className="mb-20" variants={containerVariants} initial="hidden" animate="visible">
-              <motion.div className="mb-10" variants={itemVariants}>
-                <h2 className="text-4xl tracking-tight">Mood Playlists</h2>
-              </motion.div>
-              {renderPlaylistsGrid(filteredMoodPlaylists, 'No mood playlists match your search.')}
+              <MoodView
+                preferredLanguages={onboardingPrefs?.languages ?? []}
+                onPlaySong={handlePlaySong}
+                onLikeSong={handleLikeSong}
+                likedSongIds={likedSongIds}
+              />
             </motion.section>
           )}
 
-          {activeMenuItem === 'ai-dj' && (
+          {(activeMenuItem === 'ai-dj' || activeMenuItem === 'multiuser') && (
             <motion.section className="mb-20" variants={containerVariants} initial="hidden" animate="visible">
               <motion.div className="mb-10 flex items-center gap-4" variants={itemVariants}>
                 <div className="w-12 h-12 rounded-full bg-gradient-to-br from-accent/20 to-accent/5 flex items-center justify-center">
@@ -833,89 +1102,111 @@ function AppContent() {
               </motion.div>
               <MultiUserSession
                 currentSongId={currentSong?.id ?? null}
-                onJoinSession={() => alert('Joined session! (Sync logic to be implemented)')}
-                onSyncToggle={(sync) => {
-                  if (sync) {
-                    alert('Sync Playback enabled! (Sync logic to be implemented)');
-                  } else {
-                    alert('Sync Playback disabled.');
-                  }
-                }}
+                currentSongTitle={currentSong?.title ?? null}
+                currentSongArtist={currentSong?.artist ?? null}
               />
             </motion.section>
           )}
 
-          {/* FIX: removed orphaned duplicate ai-dj section that was placed after multiuser without a condition */}
-          {activeMenuItem === 'multiuser' && (
+          {activeMenuItem === 'manage-widgets' && (
             <motion.section className="mb-20" variants={containerVariants} initial="hidden" animate="visible">
-              <motion.div className="mb-10 flex items-center gap-4" variants={itemVariants}>
-                <div className="w-12 h-12 rounded-full bg-gradient-to-br from-accent/20 to-accent/5 flex items-center justify-center">
-                  <Users className="w-6 h-6 text-accent" />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground tracking-[0.2em] uppercase">Live Session</p>
-                  <h2 className="text-4xl tracking-tight">Multi-User Listening</h2>
-                </div>
-              </motion.div>
-              <MultiUserSession
-                currentSongId={currentSong?.id ?? null}
-                onJoinSession={() => alert('Joined session! (Sync logic to be implemented)')}
-                onSyncToggle={(sync) => {
-                  if (sync) {
-                    alert('Sync Playback enabled! (Sync logic to be implemented)');
-                  } else {
-                    alert('Sync Playback disabled.');
-                  }
-                }}
-              />
+              <WidgetManagerPage activeWidgetIds={activeWidgetIds} onToggle={handleToggleWidgetWithRedirect} />
             </motion.section>
           )}
+
+          {(() => {
+            const widgetDef = WIDGET_REGISTRY.find((w) => w.id === activeMenuItem);
+            if (!widgetDef || !activeWidgetIds.includes(widgetDef.id)) return null;
+            const Page = widgetDef.PageComponent;
+            return (
+              <motion.section className="mb-20" variants={containerVariants} initial="hidden" animate="visible">
+                <Page
+                  ctx={{
+                    currentSong,
+                    isPlaying,
+                    recentSongs: recentlyPlayedSongs,
+                    likedSongs: candidatePool.filter((song) => likedSongIds.has(song.id)),
+                    onboardingPrefs,
+                    onPlaySong: handlePlaySong,
+                    onPlayPause: handlePlayPause,
+                    onSelectMood: handleSelectMoodFromWidget,
+                  }}
+                />
+              </motion.section>
+            );
+          })()}
         </div>
       </main>
 
-      <motion.button
-        onClick={() => setIsAIAssistantOpen(!isAIAssistantOpen)}
-        className="fixed right-8 bottom-36 z-[70] flex items-center gap-3 px-6 py-4 rounded-full bg-[#1DB954] text-[#0A0A0A] border-2 border-white/80 hover:bg-[#22C55E] transition-colors group shadow-2xl"
-        whileHover={{ scale: 1.05, boxShadow: '0 24px 50px rgba(29, 185, 84, 0.45)' }}
-        whileTap={{ scale: 0.98 }}
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.5 }}
-      >
-        <Sparkles className="w-5 h-5 text-[#0A0A0A] group-hover:rotate-12 transition-transform" />
-        <span className="text-sm font-semibold text-[#0A0A0A]">AI Curator</span>
-      </motion.button>
+      {!isAIAssistantOpen && (
+        <motion.button
+          onClick={() => setIsAIAssistantOpen(true)}
+          className="fixed right-8 bottom-24 z-[70] flex items-center gap-3 px-6 py-4 rounded-full bg-accent text-accent-foreground hover:brightness-110 transition-all group shadow-2xl ring-1 ring-accent/40"
+          whileHover={{ scale: 1.05, boxShadow: '0 24px 50px rgba(216, 163, 92, 0.45)' }}
+          whileTap={{ scale: 0.98 }}
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
+        >
+          <Sparkles className="w-5 h-5 group-hover:rotate-12 transition-transform" />
+          <span className="text-sm font-semibold">AI Curator</span>
+        </motion.button>
+      )}
 
       <MusicPlayer
         currentSong={currentSong}
         isPlaying={isPlaying}
         progress={progress}
         volume={volume}
+        repeatMode={repeatMode}
         onVolumeChange={setVolume}
         onPlayPause={handlePlayPause}
         onNext={handleNext}
         onPrevious={handlePrevious}
         onShowLyrics={() => setIsLyricsOpen(true)}
+        onRepeatModeChange={handleRepeatModeChange}
         onProgressChange={handleProgressChange}
       />
 
       <AIAssistant
         isOpen={isAIAssistantOpen}
         onClose={() => setIsAIAssistantOpen(false)}
-        songs={allSongs}
-        playlists={mockPlaylists}
-        searchResultSongIds={searchSongsForView.map((song) => song.id)}
-        onApplyRerank={(songIds) => setAiRerankedSongIds(songIds)}
+        currentSong={currentSong}
+        likedSongs={candidatePool.filter((song) => likedSongIds.has(song.id))}
+        recentSongs={recentlyPlayedSongs}
+        preferredLanguages={effectiveLanguages}
+        contentLanguage={contentLanguage}
+        onContentLanguageChange={setContentLanguage}
+        onPlaySong={handlePlaySong}
+        onAddToLibrary={(songs) => {
+          songs.forEach((song) => {
+            songDirectoryRef.current.set(song.id, song);
+          });
+          setRecentlyPlayedSongs((prev) => {
+            const existing = new Set(prev.map((s) => s.id));
+            const additions = songs.filter((s) => !existing.has(s.id));
+            return [...additions, ...prev].slice(0, RECENT_SONGS_LIMIT);
+          });
+        }}
       />
 
       <SongDetailsPage
         song={currentSong}
+        nextSongs={queuePreviewSongs}
         isOpen={isLyricsOpen}
         onClose={() => setIsLyricsOpen(false)}
         isPlaying={isPlaying}
         progress={progress}
         onPlayPause={handlePlayPause}
       />
+
+      <OnboardingModal
+        isOpen={isOnboardingOpen}
+        displayName={displayName}
+        onComplete={handleOnboardingComplete}
+        onSkip={handleOnboardingSkip}
+      />
+
     </div>
   );
 }

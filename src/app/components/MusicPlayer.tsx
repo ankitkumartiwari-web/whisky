@@ -20,11 +20,13 @@ interface MusicPlayerProps {
   isPlaying: boolean;
   progress: number;
   volume: number;
+  repeatMode: 'off' | 'one' | 'all';
   onVolumeChange: (v: number) => void;
   onPlayPause: () => void;
   onNext: () => void;
   onPrevious: () => void;
   onShowLyrics: () => void;
+  onRepeatModeChange: () => void;
   onProgressChange?: (progress: number) => void;
   onDiagnosticsChange?: (diagnostics: PlayerRuntimeDiagnostics) => void;
 }
@@ -34,17 +36,18 @@ const MusicPlayer = (props: MusicPlayerProps) => {
     currentSong,
     isPlaying,
     progress: externalProgress,
+    repeatMode,
     onPlayPause,
     onNext,
     onPrevious,
     onShowLyrics,
+    onRepeatModeChange,
     onProgressChange,
     volume,
     onVolumeChange,
   } = props;
 
   const [isShuffle, setIsShuffle] = useState(false);
-  const [repeatMode, setRepeatMode] = useState<'off' | 'all' | 'one'>('off');
   const [isLiked, setIsLiked] = useState(false);
   const [isBuffering] = useState(false);
 
@@ -163,16 +166,31 @@ const MusicPlayer = (props: MusicPlayerProps) => {
                 </button>
 
                 <button
-                  onClick={() =>
-                    setRepeatMode((prev) =>
-                      prev === 'off' ? 'all' : prev === 'all' ? 'one' : 'off',
-                    )
+                  onClick={onRepeatModeChange}
+                  title={
+                    repeatMode === 'one'
+                      ? 'Repeat one'
+                      : repeatMode === 'all'
+                        ? 'Repeat all'
+                        : 'Repeat off'
                   }
                   className={`transition-colors ${
                     repeatMode !== 'off' ? 'text-accent' : 'text-white/60 hover:text-white'
                   }`}
                 >
-                  <Repeat className="w-4 h-4" />
+                  <span className="relative inline-flex items-center justify-center w-6 h-6 overflow-visible">
+                    <Repeat className="w-5 h-5" />
+                    {repeatMode === 'one' && (
+                      <span className="absolute -top-2 -right-2 z-20 flex h-5 w-5 items-center justify-center rounded-full bg-black text-[11px] font-extrabold leading-none text-white border border-accent shadow-[0_0_0_2px_rgba(0,0,0,0.55)]">
+                        1
+                      </span>
+                    )}
+                    {repeatMode === 'all' && (
+                      <span className="absolute -top-2 -right-3 z-20 flex h-5 min-w-5 items-center justify-center rounded-full bg-black px-1 text-[11px] font-extrabold leading-none text-white border border-accent shadow-[0_0_0_2px_rgba(0,0,0,0.55)]">
+                        8
+                      </span>
+                    )}
+                  </span>
                 </button>
               </div>
 
@@ -201,7 +219,7 @@ const MusicPlayer = (props: MusicPlayerProps) => {
             {/* Volume Control - Right */}
             <div className="flex items-center gap-4 w-80 justify-end">
               <div className="flex items-center gap-3">
-                <Volume2 className="w-5 h-5 text-[color:var(--accent,#1DB954)] dark:text-[color:var(--accent,#1DB954)]" />
+                <Volume2 className="w-5 h-5 text-[color:var(--accent,var(--accent))] dark:text-[color:var(--accent,var(--accent))]" />
                 <div className="w-28">
                   <Slider
                     value={[volume]}

@@ -1,11 +1,21 @@
 import { useEffect, useState, useRef } from 'react';
-import { X, Heart, Share2, Plus, Play, Pause, Clock, Disc, Music2, Calendar } from 'lucide-react';
+import { X, Heart, Share2, Plus, Play, Pause, Clock, Disc, Music2, Calendar, ChevronDown, ChevronUp, Check } from 'lucide-react';
 import { Song } from '../data/mockData';
 import { motion, AnimatePresence } from 'motion/react';
 import { WaveformVisualizer } from './WaveformVisualizer';
 import { Skeleton } from './ui/skeleton';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
 import { getArtistMetadata, getOriginMetadata, getSongMetadata } from '../data/catalogMetadata';
-import { fetchGeniusMetadata, type GeniusMetadata } from '../lib/geniusApi';
+import { fetchSongMetadata, type SongMetadata } from '../lib/metadataApi';
+import {
+  USER_PLAYLISTS_CHANGE_EVENT,
+  addSongToPlaylist,
+  createUserPlaylist,
+  getPlaylistsContaining,
+  listUserPlaylists,
+  removeSongFromPlaylist,
+  type UserPlaylist,
+} from '../lib/userPlaylistStore';
 import {
   createPlaybackChecklist,
   getPlaybackEnvironment,
@@ -16,11 +26,13 @@ import {
 
 interface SongDetailsPageProps {
   song: Song | null;
+  nextSongs: Song[];
   isOpen: boolean;
   onClose: () => void;
   isPlaying: boolean;
   progress: number;
   onPlayPause?: () => void;
+  playerRef?: { current: any };
 }
 
 const getAccentColor = (songId: string): string => {
@@ -29,20 +41,22 @@ const getAccentColor = (songId: string): string => {
     song2: '#2563EB',
     song3: '#059669',
   };
-  return colors[songId] ?? '#1DB954';
+  return colors[songId] ?? '#D8A35C';
 };
 
 export function SongDetailsPage({
   song,
+  nextSongs,
   isOpen,
   onClose,
   isPlaying,
   progress,
   onPlayPause,
+  playerRef,
 }: SongDetailsPageProps) {
   const [isLiked, setIsLiked] = useState(false);
-  const [geniusMetadata, setGeniusMetadata] = useState<GeniusMetadata | null>(null);
-  const [geniusLyrics, setGeniusLyrics] = useState<string | null>(null);
+  const [songMetadata, setSongMetadata] = useState<SongMetadata | null>(null);
+  const [songLyrics, setSongLyrics] = useState<string | null>(null);
   const [isMetadataLoading, setIsMetadataLoading] = useState(false);
   const loadingStartedAtRef = useRef<number | null>(null);
   const loadingTimerRef = useRef<number | null>(null);
@@ -57,6 +71,156 @@ export function SongDetailsPage({
     userAgent: typeof navigator === 'undefined' ? 'unknown' : navigator.userAgent,
   });
   const lyricsRef = useRef<HTMLDivElement>(null);
+  const activeLineRef = useRef<HTMLParagraphElement | null>(null);
+  const [shareState, setShareState] = useState<'idle' | 'copied' | 'shared'>('idle');
+  const [isPlaylistMenuOpen, setIsPlaylistMenuOpen] = useState(false);
+  const [playlists, setPlaylists] = useState<UserPlaylist[]>([]);
+  const [containingPlaylistIds, setContainingPlaylistIds] = useState<Set<string>>(new Set());
+  const [newPlaylistName, setNewPlaylistName] = useState('');
+
+  const refreshPlaylistState = () => {
+    setPlaylists(listUserPlaylists());
+    if (song?.id) setContainingPlaylistIds(new Set(getPlaylistsContaining(song.id)));
+  };
+
+  useEffect(() => {
+    refreshPlaylistState();
+    const handler = () => refreshPlaylistState();
+    window.addEventListener(USER_PLAYLISTS_CHANGE_EVENT, handler);
+    return () => window.removeEventListener(USER_PLAYLISTS_CHANGE_EVENT, handler);
+  }, [song?.id]);
+
+  const handleTogglePlaylistMembership = (playlistId: string) => {
+    if (!song) return;
+    if (containingPlaylistIds.has(playlistId)) {
+      removeSongFromPlaylist(playlistId, song.id);
+    } else {
+      addSongToPlaylist(playlistId, song);
+    }
+  };
+
+  const handleCreatePlaylistWithSong = (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!song) return;
+    const name = newPlaylistName.trim() || `${song.title.slice(0, 20)} mix`;
+    const playlist = createUserPlaylist(name);
+    addSongToPlaylist(playlist.id, song);
+    setNewPlaylistName('');
+  };
+
+  const inPlaylistCount = containingPlaylistIds.size;
+
+  const handleShareSong = async () => {
+    if (!song) return;
+    const youtubeUrl = song.videoId
+      ? `https://www.youtube.com/watch?v=${song.videoId}`
+      : '';
+    const shareTitle = `${song.title} — ${song.artist}`;
+    const shareText = `🎵 Listening to "${song.title}" by ${song.artist} on Whisky Music`;
+    const shareUrl = youtubeUrl || window.location.href;
+
+    if (typeof navigator.share === 'function') {
+      try {
+        await navigator.share({ title: shareTitle, text: shareText, url: shareUrl });
+        setShareState('shared');
+        window.setTimeout(() => setShareState('idle'), 1800);
+        return;
+      } catch (err) {
+        // User cancelled or share failed — fall through to clipboard.
+        if ((err as Error)?.name === 'AbortError') return;
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(`${shareText}\n${shareUrl}`);
+      setShareState('copied');
+      window.setTimeout(() => setShareState('idle'), 1800);
+    } catch {
+      // last resort: select-and-copy fallback
+      const ta = document.createElement('textarea');
+      ta.value = `${shareText}\n${shareUrl}`;
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch { /* noop */ }
+      document.body.removeChild(ta);
+      setShareState('copied');
+      window.setTimeout(() => setShareState('idle'), 1800);
+    }
+  };
+
+  // Read currentTime directly from the player via rAF — bypasses React state lag.
+  const [livePlayerTime, setLivePlayerTime] = useState(0);
+  useEffect(() => {
+    if (!isOpen) return;
+    let raf = 0;
+    const loop = () => {
+      const player = playerRef?.current;
+      let now = 0;
+      if (player) {
+        if (typeof player.getCurrentTime === 'function') {
+          try {
+            const value = player.getCurrentTime();
+            if (typeof value === 'number' && Number.isFinite(value)) now = value;
+          } catch {
+            // fall back below
+          }
+        }
+        if (now === 0 && typeof player.currentTime === 'number' && Number.isFinite(player.currentTime)) {
+          now = player.currentTime;
+        }
+      }
+      if (now === 0 && song?.duration) {
+        now = (progress / 100) * song.duration;
+      }
+      setLivePlayerTime(now);
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [isOpen, playerRef, song?.duration, progress]);
+
+  const syncedLinesPrecomputed = (() => {
+    const raw = songMetadata?.syncedLyrics;
+    if (!raw) return [] as Array<{ time: number; text: string }>;
+    const lines: Array<{ time: number; text: string }> = [];
+    raw.split(/\r?\n/).forEach((rawLine) => {
+      const matches = rawLine.match(/\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/g);
+      if (!matches) return;
+      const text = rawLine.replace(/\[[^\]]+\]/g, '').trim();
+      matches.forEach((stamp) => {
+        const m = stamp.match(/\[(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?\]/);
+        if (!m) return;
+        const min = Number(m[1]);
+        const sec = Number(m[2]);
+        const ms = m[3] ? Number((m[3] + '00').slice(0, 3)) : 0;
+        const time = min * 60 + sec + ms / 1000;
+        lines.push({ time, text });
+      });
+    });
+    return lines.sort((a, b) => a.time - b.time);
+  })();
+  const currentTimeSecPre = livePlayerTime;
+  const adjustedTimeSecPre = Math.max(0, currentTimeSecPre);
+  const activeLineIndex = (() => {
+    if (syncedLinesPrecomputed.length === 0) return -1;
+    if (adjustedTimeSecPre < syncedLinesPrecomputed[0].time) return -1;
+    let idx = 0;
+    for (let i = 0; i < syncedLinesPrecomputed.length; i += 1) {
+      if (syncedLinesPrecomputed[i].time <= adjustedTimeSecPre) idx = i;
+      else break;
+    }
+    return idx;
+  })();
+
+  useEffect(() => {
+    if (activeLineIndex < 0) return;
+    const node = activeLineRef.current;
+    if (!node) return;
+    const id = window.setTimeout(() => {
+      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 60);
+    return () => window.clearTimeout(id);
+  }, [activeLineIndex]);
 
   useEffect(() => {
     if (song) setIsLiked(song.isLiked ?? false);
@@ -71,8 +235,8 @@ export function SongDetailsPage({
     }
 
     if (!song) {
-      setGeniusMetadata(null);
-      setGeniusLyrics(null);
+      setSongMetadata(null);
+      setSongLyrics(null);
       setIsMetadataLoading(false);
       loadingStartedAtRef.current = null;
       return;
@@ -80,17 +244,17 @@ export function SongDetailsPage({
 
     setIsMetadataLoading(true);
     loadingStartedAtRef.current = window.performance.now();
-    setGeniusMetadata(null);
-    setGeniusLyrics(null);
+    setSongMetadata(null);
+    setSongLyrics(null);
 
-    fetchGeniusMetadata(song.title, song.artist)
+    fetchSongMetadata(song.title, song.artist)
       .then((result) => {
         if (!isMounted) return;
         const metadata = result.data?.metadata ?? null;
         const applyResult = () => {
           if (!isMounted) return;
-          setGeniusMetadata(metadata);
-          setGeniusLyrics(metadata?.songDescription ?? null);
+          setSongMetadata(metadata);
+          setSongLyrics(metadata?.songDescription ?? null);
           setIsMetadataLoading(false);
           loadingStartedAtRef.current = null;
           loadingTimerRef.current = null;
@@ -131,22 +295,43 @@ export function SongDetailsPage({
   const originMeta = getOriginMetadata(song.album);
   const playbackChecklist = createPlaybackChecklist(song, isPlaying, playerDiagnostics);
   const completedChecks = playbackChecklist.filter((i) => i.status === 'pass').length;
-  const lyricsContent = geniusLyrics;
-  const isLyricsLoading = isMetadataLoading || (geniusLyrics === null && geniusMetadata === null);
+  const lyricsContent = songLyrics;
+  const isLyricsLoading = isMetadataLoading || (songLyrics === null && songMetadata === null);
 
   const formatDuration = (s: number) =>
     `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
 
   const originLabel = songMeta?.originType === 'movie' || originMeta?.type === 'movie' ? 'Movie' : 'Album';
-  const artistGenres = artistMeta?.genres ?? [];
+  const artistGenres = artistMeta?.genres ?? (song.genre ? [song.genre] : []);
   const moodTags = songMeta?.moods ?? [];
   const activityTags = songMeta?.activities ?? [];
-  const resolvedGenre = geniusMetadata?.genre ?? songMeta?.genre ?? 'Unknown';
-  const resolvedLanguage = geniusMetadata?.language ?? songMeta?.language ?? originMeta?.language ?? 'Unknown';
-  const resolvedYear = geniusMetadata?.originYear ?? songMeta?.originYear ?? originMeta?.year ?? null;
-  const sourceLabel = geniusMetadata?.source === 'google'
+  const resolvedGenre =
+    songMetadata?.genre || songMeta?.genre || song.genre || 'Unknown';
+  const resolvedLanguage = (() => {
+    const direct = songMetadata?.language || songMeta?.language || originMeta?.language;
+    if (direct) return direct;
+    const country = (song.country ?? '').toUpperCase();
+    const map: Record<string, string> = {
+      USA: 'English', GBR: 'English', AUS: 'English', CAN: 'English',
+      IND: 'Hindi / Indian', KOR: 'Korean', JPN: 'Japanese',
+      FRA: 'French', DEU: 'German', ITA: 'Italian',
+      MEX: 'Spanish', ESP: 'Spanish', ARG: 'Spanish', BRA: 'Portuguese',
+      CHN: 'Chinese', RUS: 'Russian', NLD: 'Dutch', SWE: 'Swedish',
+    };
+    return map[country] || 'Unknown';
+  })();
+  const resolvedYear = songMetadata?.originYear ?? songMeta?.originYear ?? originMeta?.year ?? song.releaseYear ?? null;
+  const resolvedArtistBio =
+    artistMeta?.bio ||
+    songMeta?.artistBio ||
+    songMetadata?.artistDescription ||
+    `${song.artist} — ${[resolvedGenre, resolvedLanguage].filter((v) => v && v !== 'Unknown').join(' · ') || 'discover their catalog by playing more tracks.'}`;
+
+  const syncedLines = syncedLinesPrecomputed;
+  const hasSyncedLyrics = syncedLines.length > 0;
+  const sourceLabel = songMetadata?.source
     ? 'View source'
-    : 'View on Genius';
+    : 'View source';
 
   const metaRows: [string, string][] = [
     ['Artist',   song.artist],
@@ -164,7 +349,7 @@ export function SongDetailsPage({
       <AnimatePresence>
         {isOpen && (
           <motion.div
-            className="fixed inset-0 z-50 flex flex-col bg-slate-50 text-slate-950 dark:bg-[#0c0c0e] dark:text-white"
+            className="fixed inset-0 z-50 flex flex-col bg-background text-foreground"
             initial={{ opacity: 0, y: 24 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 24 }}
@@ -242,7 +427,7 @@ export function SongDetailsPage({
     <AnimatePresence>
       {isOpen && (
         <motion.div
-          className="fixed inset-0 z-50 flex flex-col bg-slate-50 text-slate-950 dark:bg-[#0c0c0e] dark:text-white"
+          className="fixed inset-0 z-50 flex flex-col bg-background text-foreground"
           initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 24 }}
@@ -278,12 +463,95 @@ export function SongDetailsPage({
               >
                 <Heart className={`w-4 h-4 ${isLiked ? 'fill-current' : 'text-slate-500 dark:text-white/50'}`} />
               </button>
-              <button className="w-9 h-9 rounded-full flex items-center justify-center transition-colors bg-slate-100 text-slate-600 dark:bg-white/5 dark:text-white/50">
-                <Share2 className="w-4 h-4" />
+              <button
+                onClick={handleShareSong}
+                className="relative w-9 h-9 rounded-full flex items-center justify-center transition-colors bg-slate-100 text-slate-600 dark:bg-white/5 dark:text-white/50 hover:bg-slate-200 dark:hover:bg-white/10"
+                title={shareState === 'copied' ? 'Link copied' : 'Share'}
+              >
+                {shareState === 'copied' || shareState === 'shared' ? (
+                  <Check className="w-4 h-4 text-emerald-500" />
+                ) : (
+                  <Share2 className="w-4 h-4" />
+                )}
+                {shareState === 'copied' && (
+                  <span className="absolute -bottom-7 right-0 whitespace-nowrap rounded-md bg-slate-950 text-white text-[10px] px-2 py-1 dark:bg-white dark:text-slate-950">
+                    Link copied
+                  </span>
+                )}
               </button>
-              <button className="w-9 h-9 rounded-full flex items-center justify-center transition-colors bg-slate-100 text-slate-600 dark:bg-white/5 dark:text-white/50">
-                <Plus className="w-4 h-4" />
-              </button>
+              <div className="relative">
+                <button
+                  onClick={() => setIsPlaylistMenuOpen((v) => !v)}
+                  className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
+                    inPlaylistCount > 0
+                      ? 'bg-emerald-500/15 text-emerald-500'
+                      : 'bg-slate-100 text-slate-600 dark:bg-white/5 dark:text-white/50 hover:bg-slate-200 dark:hover:bg-white/10'
+                  }`}
+                  title={inPlaylistCount > 0 ? `In ${inPlaylistCount} playlist${inPlaylistCount === 1 ? '' : 's'}` : 'Add to playlist'}
+                >
+                  {inPlaylistCount > 0 ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                </button>
+                {isPlaylistMenuOpen && (
+                  <div
+                    className="absolute right-0 mt-2 w-72 z-50 rounded-xl border border-slate-200 bg-white text-slate-950 shadow-2xl dark:border-white/10 dark:bg-[#16110a] dark:text-white"
+                    onMouseLeave={() => setIsPlaylistMenuOpen(false)}
+                  >
+                    <div className="px-3 py-2 border-b border-slate-200 dark:border-white/10">
+                      <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500 dark:text-white/50">
+                        Add "{song.title}" to playlist
+                      </p>
+                    </div>
+                    <div className="max-h-56 overflow-y-auto custom-scrollbar">
+                      {playlists.length === 0 ? (
+                        <p className="px-3 py-3 text-xs text-slate-500 dark:text-white/50">
+                          You have no playlists yet — create one below.
+                        </p>
+                      ) : (
+                        playlists.map((p) => {
+                          const inThis = containingPlaylistIds.has(p.id);
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => handleTogglePlaylistMembership(p.id)}
+                              className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-white/5"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <p className="truncate">{p.name}</p>
+                                <p className="text-[10px] text-slate-500 dark:text-white/50">
+                                  {p.songIds.length} song{p.songIds.length === 1 ? '' : 's'}
+                                </p>
+                              </div>
+                              {inThis ? (
+                                <Check className="h-4 w-4 text-emerald-500" />
+                              ) : (
+                                <Plus className="h-4 w-4 text-slate-400 dark:text-white/40" />
+                              )}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                    <form
+                      onSubmit={handleCreatePlaylistWithSong}
+                      className="border-t border-slate-200 dark:border-white/10 p-3 flex items-center gap-2"
+                    >
+                      <input
+                        value={newPlaylistName}
+                        onChange={(e) => setNewPlaylistName(e.target.value)}
+                        placeholder="New playlist..."
+                        className="flex-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-950 placeholder:text-slate-400 focus:outline-none focus:border-accent dark:border-white/10 dark:bg-white/5 dark:text-white dark:placeholder:text-white/40"
+                      />
+                      <button
+                        type="submit"
+                        className="rounded-md bg-accent px-2.5 py-1 text-xs font-semibold text-accent-foreground hover:brightness-110"
+                      >
+                        Create
+                      </button>
+                    </form>
+                  </div>
+                )}
+              </div>
               <div className="w-px h-6 bg-slate-300/40 dark:bg-white/10 mx-1" />
               <button
                 onClick={onClose}
@@ -365,7 +633,7 @@ export function SongDetailsPage({
                   </span>
                 </div>
                 <p className="text-slate-600 dark:text-white/70">
-                  {song.videoId ? 'YouTube audio stream' : 'No source linked'}
+                  {song.videoId ? 'Playback source linked' : 'No source linked'}
                 </p>
               </div>
             </div>
@@ -393,7 +661,7 @@ export function SongDetailsPage({
                 <h2 className="text-[10px] uppercase tracking-[0.28em] text-slate-500 dark:text-white/40 mb-3">Artist</h2>
                 <div className="rounded-2xl p-4 bg-slate-50 border border-slate-200/70 text-slate-700 dark:bg-white/5 dark:border-white/10 dark:text-white/70">
                   <p className="text-slate-700 dark:text-white/70 text-sm leading-relaxed">
-                    {artistMeta?.bio ?? songMeta?.artistBio ?? 'No artist bio available.'}
+                    {resolvedArtistBio}
                   </p>
                   {artistGenres.length > 0 && (
                     <div className="flex flex-wrap gap-1.5 mt-3">
@@ -444,10 +712,9 @@ export function SongDetailsPage({
                 </section>
               )}
 
-              {/* Genius link */}
-              {geniusMetadata?.geniusUrl && (
+              {songMetadata?.sourceUrl && (
                 <a
-                  href={geniusMetadata.geniusUrl ?? undefined}
+                  href={songMetadata.sourceUrl ?? undefined}
                   target="_blank"
                   rel="noreferrer"
                   className="text-xs underline underline-offset-2"
@@ -460,22 +727,98 @@ export function SongDetailsPage({
 
             {/* Column 3 - Lyrics ------------------------------------ */}
             <div className="flex flex-col flex-1 min-w-0 px-8 py-8">
-              <div className="flex items-baseline justify-between mb-5 flex-shrink-0">
+              <div className="flex items-baseline justify-between mb-3 flex-shrink-0">
                 <h2 className="text-slate-950 dark:text-white text-lg font-semibold">Lyrics</h2>
                 <span className="text-slate-500 dark:text-white/40 text-xs uppercase tracking-widest">
                   {isLyricsLoading ? 'Loading' : lyricsContent ? 'Available' : 'Unavailable'}
                 </span>
               </div>
-              {lyricsContent == null && geniusMetadata?.songDescription && (
+              {nextSongs.length > 0 && (
+                <Collapsible defaultOpen={false} className="mb-5 rounded-2xl border border-slate-200/70 bg-white/80 shadow-sm overflow-hidden dark:border-white/10 dark:bg-white/5">
+                  <CollapsibleTrigger asChild>
+                    <button className="group w-full px-4 py-3 text-left">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-[10px] uppercase tracking-[0.28em] text-slate-500 dark:text-white/40">
+                          Next in Queue
+                        </p>
+                        <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200/70 bg-white text-slate-700 dark:border-white/10 dark:bg-white/5 dark:text-white/70">
+                          <ChevronDown className="h-4 w-4 group-data-[state=open]:hidden" />
+                          <ChevronUp className="hidden h-4 w-4 group-data-[state=open]:block" />
+                        </span>
+                      </div>
+                      <div className="mt-3 flex items-center gap-3">
+                        <img
+                          src={nextSongs[0].coverUrl}
+                          alt={nextSongs[0].title}
+                          className="w-12 h-12 rounded-xl object-cover flex-shrink-0"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-slate-950 dark:text-white truncate">
+                            {nextSongs[0].title}
+                          </p>
+                          <p className="text-xs text-slate-500 dark:text-white/60 truncate">
+                            {nextSongs[0].artist}
+                          </p>
+                        </div>
+                      </div>
+                    </button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="px-4 pb-4 space-y-3">
+                    {nextSongs.slice(1, 3).map((queueSong, index) => (
+                      <div key={queueSong.id} className="flex items-center gap-3 rounded-xl border border-slate-200/70 bg-white/70 p-3 dark:border-white/10 dark:bg-white/5">
+                        <img
+                          src={queueSong.coverUrl}
+                          alt={queueSong.title}
+                          className="w-12 h-12 rounded-lg object-cover flex-shrink-0"
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500 dark:text-white/40 mb-1">
+                            Soon {index + 2}
+                          </p>
+                          <p className="text-sm font-medium text-slate-950 dark:text-white truncate">
+                            {queueSong.title}
+                          </p>
+                          <p className="text-xs text-slate-500 dark:text-white/60 truncate">
+                            {queueSong.artist}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
+              {lyricsContent == null && songMetadata?.songDescription && (
                 <p className="mb-5 text-sm leading-relaxed text-slate-500 dark:text-white/50">
-                  {geniusMetadata.songDescription}
+                  {songMetadata.songDescription}
                 </p>
               )}
               <div
                 ref={lyricsRef}
                 className="flex-1 overflow-y-auto rounded-2xl p-6 custom-scrollbar bg-white border border-slate-200/70 shadow-sm dark:bg-white/5 dark:border-white/10"
               >
-                {lyricsContent ? (
+                {hasSyncedLyrics ? (
+                  <div className="space-y-3">
+                    {syncedLines.map((line, idx) => {
+                      const isActive = idx === activeLineIndex;
+                      const distance = Math.abs(idx - activeLineIndex);
+                      const opacity = isActive ? 1 : Math.max(0.25, 1 - distance * 0.18);
+                      return (
+                        <p
+                          key={`${line.time}-${idx}`}
+                          ref={isActive ? activeLineRef : undefined}
+                          className={`leading-relaxed transition-all duration-300 ${
+                            isActive
+                              ? 'text-2xl md:text-3xl font-semibold text-slate-950 dark:text-white'
+                              : 'text-base md:text-lg text-slate-500 dark:text-white/60'
+                          }`}
+                          style={{ opacity, minHeight: '1.5rem' }}
+                        >
+                          {line.text || <>&nbsp;</>}
+                        </p>
+                      );
+                    })}
+                  </div>
+                ) : lyricsContent ? (
                   <div className="space-y-3">
                     {lyricsContent.split('\n').map((line, idx) => (
                       <p

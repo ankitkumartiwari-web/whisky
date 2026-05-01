@@ -1,8 +1,10 @@
 
 import dotenv from 'dotenv';
-dotenv.config();
+dotenv.config({ override: true });
 import YTMusic from 'ytmusic-api';
 const ytmusic = new YTMusic();
+import { appendFile, mkdir } from 'node:fs/promises';
+import path from 'node:path';
 // --- YouTube Enrichment Layer for iTunes Results ---
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 if (!YOUTUBE_API_KEY) {
@@ -101,22 +103,19 @@ async function searchYouTubeForSong(title, artist) {
 }
 
 async function attachYouTubeIdsToSongs(songs) {
-  const results = [];
-  for (const song of songs) {
-    if (!song.videoId) {
+  const results = await Promise.all(
+    songs.map(async (song) => {
+      if (song.videoId) return song;
       const videoId = await searchYouTubeForSong(song.title, song.artist);
       if (!videoId) {
         console.warn('[YouTubeEnrich] No videoId found for', song.title, '-', song.artist);
       }
-      results.push({ ...song, videoId });
-    } else {
-      results.push(song);
-    }
-  }
-  console.log('[YouTubeEnrich] Final enriched results:', results);
+      return { ...song, videoId };
+    }),
+  );
   return results;
 }
-import 'dotenv/config';
+// dotenv already configured at top of file with override: true
 import express from 'express';
 import cors from 'cors';
 import { Resend } from 'resend';
@@ -137,8 +136,6 @@ const resetRateLimitWindowMs = Number(process.env.RESET_RATE_LIMIT_WINDOW_MS ?? 
 const resetRateLimitMax = Number(process.env.RESET_RATE_LIMIT_MAX ?? 5);
 const aiRateLimitWindowMs = Number(process.env.AI_RATE_LIMIT_WINDOW_MS ?? 60_000);
 const aiRateLimitMax = Number(process.env.AI_RATE_LIMIT_MAX ?? 20);
-const geniusRateLimitWindowMs = Number(process.env.GENIUS_RATE_LIMIT_WINDOW_MS ?? 60_000);
-const geniusRateLimitMax = Number(process.env.GENIUS_RATE_LIMIT_MAX ?? 30);
 const metadataRateLimitWindowMs = Number(process.env.METADATA_RATE_LIMIT_WINDOW_MS ?? 60_000);
 const metadataRateLimitMax = Number(process.env.METADATA_RATE_LIMIT_MAX ?? 30);
 const searchRateLimitWindowMs = Number(process.env.SEARCH_RATE_LIMIT_WINDOW_MS ?? 60_000);
@@ -146,13 +143,22 @@ const searchRateLimitMax = Number(process.env.SEARCH_RATE_LIMIT_MAX ?? 30);
 const openRouterApiKey = process.env.OPENROUTER_API_KEY;
 const openRouterModel = process.env.OPENROUTER_MODEL ?? 'arcee-ai/trinity-large-preview';
 const openRouterBaseUrl = process.env.OPENROUTER_BASE_URL ?? 'https://openrouter.ai/api/v1';
-const geniusAccessToken = process.env.GENIUS_ACCESS_TOKEN;
-const geniusBaseUrl = process.env.GENIUS_BASE_URL ?? 'https://api.genius.com';
 const metadataProvider = (process.env.METADATA_PROVIDER ?? 'auto').toLowerCase();
 const metadataFallbackEnabled = (process.env.METADATA_FALLBACK_ENABLED ?? 'true').toLowerCase() !== 'false';
-const googleCustomSearchApiKey = process.env.GOOGLE_CUSTOM_SEARCH_API_KEY;
-const googleCustomSearchCx = process.env.GOOGLE_CUSTOM_SEARCH_CX;
-const googleMetadataEnabled = Boolean(googleCustomSearchApiKey && googleCustomSearchCx);
+const musicBrainzBaseUrl = process.env.MUSICBRAINZ_BASE_URL ?? 'https://musicbrainz.org/ws/2';
+const musicBrainzUserAgent = process.env.MUSICBRAINZ_USER_AGENT ?? 'WhiskyMusicApp/1.0 (ankit.dev@gmail.com)';
+const metadataCacheTtlMs = Number(process.env.METADATA_CACHE_TTL_MS ?? 90 * 24 * 60 * 60 * 1000);
+const lyricsCacheTtlMs = Number(process.env.LYRICS_CACHE_TTL_MS ?? 30 * 24 * 60 * 60 * 1000);
+const serpProvider = (process.env.SERP_PROVIDER ?? (process.env.SERP_API_KEY ? 'serper' : 'google')).toLowerCase();
+const serpApiKey = process.env.SERP_API_KEY ?? '';
+const serpSearchEngineId = process.env.SERP_SEARCH_ENGINE_ID ?? '';
+const serpBaseUrl = process.env.SERP_BASE_URL
+  ?? (serpProvider === 'serper' ? 'https://google.serper.dev/search' : 'https://www.googleapis.com/customsearch/v1');
+const youtubeApiKey = process.env.YOUTUBE_API_KEY;
+const youtubeRecommendationCache = new Map();
+const recommenderServiceUrl = process.env.RECOMMENDER_SERVICE_URL ?? 'http://127.0.0.1:8790/recommendations';
+const recommenderServiceTimeoutMs = Number(process.env.RECOMMENDER_SERVICE_TIMEOUT_MS ?? 2500);
+const recommenderHistoryPath = process.env.RECOMMENDER_HISTORY_PATH ?? 'recommender_service/training_data.jsonl';
 const ytmusicProviderUrl = process.env.YTMUSIC_PROVIDER_URL ?? '';
 const ytmusicProviderTimeoutMs = Number(process.env.YTMUSIC_PROVIDER_TIMEOUT_MS ?? 3500);
 const searchProvider = (process.env.SEARCH_PROVIDER ?? 'auto').toLowerCase();
@@ -217,10 +223,6 @@ const aiLimiter = createRateLimit({
   windowMs: aiRateLimitWindowMs,
   maxRequests: aiRateLimitMax,
 });
-const geniusLimiter = createRateLimit({
-  windowMs: geniusRateLimitWindowMs,
-  maxRequests: geniusRateLimitMax,
-});
 const metadataLimiter = createRateLimit({
   windowMs: metadataRateLimitWindowMs,
   maxRequests: metadataRateLimitMax,
@@ -230,17 +232,85 @@ const searchLimiter = createRateLimit({
   maxRequests: searchRateLimitMax,
 });
 
-const geniusMetadataCache = new Map();
+const metadataResolverCache = new Map();
+
+function sanitizeMetadataInput(value) {
+  return (value ?? '')
+    .toString()
+    .normalize('NFKC')
+    .replace(/[\u0000-\u001F\u007F]/g, ' ')
+    .replace(/[<>`$]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 180);
+}
+
+function parseYearFromDate(value) {
+  if (typeof value !== 'string') return null;
+  const match = value.match(/^(\d{4})/);
+  return match ? Number(match[1]) : null;
+}
+
+function getCachedMetadata(cacheKey) {
+  const cached = metadataResolverCache.get(cacheKey);
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    metadataResolverCache.delete(cacheKey);
+    return null;
+  }
+  return cached.data;
+}
+
+function setCachedMetadata(cacheKey, data, ttlMs) {
+  metadataResolverCache.set(cacheKey, {
+    data,
+    expiresAt: Date.now() + ttlMs,
+  });
+}
+
+function createMinTimeLimiter(minTimeMs) {
+  let queue = Promise.resolve();
+  let lastRunAt = 0;
+
+  return async (task) => {
+    const run = async () => {
+      const elapsed = Date.now() - lastRunAt;
+      const waitMs = Math.max(0, minTimeMs - elapsed);
+      if (waitMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+      }
+      lastRunAt = Date.now();
+      return task();
+    };
+
+    const next = queue.then(run, run);
+    queue = next.catch(() => {});
+    return next;
+  };
+}
+
+const runMusicBrainzRequest = createMinTimeLimiter(1000);
+
+async function fetchMusicBrainzJson(url) {
+  return runMusicBrainzRequest(async () => {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'User-Agent': musicBrainzUserAgent,
+        Accept: 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return response.json().catch(() => null);
+  });
+}
 
 function normalizeText(value) {
   return (value ?? '').toString().trim().toLowerCase();
-}
-
-function extractPlainText(value) {
-  if (!value) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value?.plain === 'string') return value.plain;
-  return '';
 }
 
 function stripHtmlTags(value) {
@@ -335,6 +405,21 @@ function toArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+async function appendRecommendationHistory(record) {
+  try {
+    const absolutePath = path.isAbsolute(recommenderHistoryPath)
+      ? recommenderHistoryPath
+      : path.resolve(process.cwd(), recommenderHistoryPath);
+    await mkdir(path.dirname(absolutePath), { recursive: true });
+    await appendFile(absolutePath, `${JSON.stringify({
+      ...record,
+      timestamp: new Date().toISOString(),
+    })}\n`, 'utf8');
+  } catch (error) {
+    console.warn('[Recommendations] Failed to append history record.', error?.message ?? error);
+  }
+}
+
 function normalizeDurationSeconds(value) {
   if (typeof value !== 'number' || Number.isNaN(value) || value <= 0) {
     return 210;
@@ -351,12 +436,38 @@ function normalizeSearchSong(item, source) {
     return null;
   }
 
-  const title = firstDefinedString(item.title, item.trackName, item.name) || 'Unknown Title';
-  const artist = firstDefinedString(item.artist, item.artistName, item.artistDisplayName) || 'Unknown Artist';
-  const album = firstDefinedString(item.album, item.albumName, item.collectionName, item.releaseName) || 'Single';
+  const youtubeSnippet = source === 'youtube'
+    ? item?.snippet ?? item?.videoSnippet ?? null
+    : null;
+  const youtubeVideoId = source === 'youtube'
+    ? extractYouTubeVideoId(item.videoId, item.youtubeVideoId, item.id?.videoId, item.url, item.webUrl)
+    : '';
+
+  const title = firstDefinedString(
+    source === 'youtube' ? youtubeSnippet?.title : '',
+    item.title,
+    item.trackName,
+    item.name,
+  ) || 'Unknown Title';
+  const artist = firstDefinedString(
+    source === 'youtube' ? youtubeSnippet?.channelTitle : '',
+    item.artist,
+    item.artistName,
+    item.artistDisplayName,
+  ) || 'Unknown Artist';
+  const album = firstDefinedString(
+    source === 'youtube' ? youtubeSnippet?.channelTitle : '',
+    item.album,
+    item.albumName,
+    item.collectionName,
+    item.releaseName,
+  ) || 'Single';
 
   // Upgrade iTunes artwork to high-res
   let coverUrl = firstDefinedString(
+    source === 'youtube' ? youtubeSnippet?.thumbnails?.maxres?.url : '',
+    source === 'youtube' ? youtubeSnippet?.thumbnails?.high?.url : '',
+    source === 'youtube' ? youtubeSnippet?.thumbnails?.medium?.url : '',
     item.coverUrl,
     item.artworkUrl100,
     item.artworkUrl60,
@@ -380,6 +491,10 @@ function normalizeSearchSong(item, source) {
     coverUrl = item.images[0].url;
   }
 
+  if (source === 'youtube' && youtubeVideoId) {
+    coverUrl = coverUrl || `https://img.youtube.com/vi/${youtubeVideoId}/hqdefault.jpg`;
+  }
+
   const duration = normalizeDurationSeconds(
     typeof item.duration === 'number'
       ? item.duration
@@ -395,10 +510,29 @@ function normalizeSearchSong(item, source) {
     item.watchId,
     item.url,
     item.webUrl,
+    source === 'youtube' ? youtubeVideoId : '',
     source === 'ytmusic' ? item.id : '',
   );
-  const preferredId = firstDefinedString(item.id, item.videoId, item.trackId);
+  const preferredId = source === 'youtube'
+    ? firstDefinedString(youtubeVideoId, item.videoId, item.trackId)
+    : firstDefinedString(item.id, item.videoId, item.trackId);
   const id = preferredId || `ext-${source}-${normalizeText(title)}-${normalizeText(artist)}`;
+
+  const genre = firstDefinedString(
+    item.genre,
+    item.primaryGenreName,
+    item.genreName,
+  ) || '';
+
+  const releaseDate = firstDefinedString(item.releaseDate, item.releaseDateOriginal) || '';
+  const releaseYear = (() => {
+    if (!releaseDate) return null;
+    const yearMatch = releaseDate.match(/\d{4}/);
+    return yearMatch ? Number(yearMatch[0]) : null;
+  })();
+
+  const country = firstDefinedString(item.country, item.collectionArtistCountry) || '';
+  const artistId = item.artistId ? String(item.artistId) : '';
 
   return {
     id,
@@ -409,6 +543,10 @@ function normalizeSearchSong(item, source) {
     duration,
     isLiked: false,
     videoId: videoId || undefined,
+    genre,
+    releaseYear,
+    country,
+    artistId,
   };
 }
 
@@ -461,15 +599,27 @@ async function fetchYtMusicSearchResults(query, limit = 12) {
   }
 }
 
-async function fetchItunesSearchResults(query, limit = 12) {
+const itunesSearchCache = new Map();
+const ITUNES_CACHE_TTL_MS = 60 * 60 * 1000;
+
+async function fetchItunesSearchResults(query, limit = 12, country = '') {
   if (!itunesSearchEnabled) {
     return [];
+  }
+
+  const cacheKey = `${(country || '').toLowerCase()}|${query.trim().toLowerCase()}|${limit}`;
+  const cachedEntry = itunesSearchCache.get(cacheKey);
+  if (cachedEntry && cachedEntry.expiresAt > Date.now()) {
+    return cachedEntry.results;
   }
 
   const url = new URL('https://itunes.apple.com/search');
   url.searchParams.set('term', query);
   url.searchParams.set('entity', 'song');
   url.searchParams.set('limit', String(Math.max(1, Math.min(limit, 25))));
+  if (country && /^[a-z]{2}$/i.test(country)) {
+    url.searchParams.set('country', country.toLowerCase());
+  }
 
   try {
     const response = await fetch(url, {
@@ -481,10 +631,12 @@ async function fetchItunesSearchResults(query, limit = 12) {
 
     const payload = await response.json().catch(() => null);
     const results = toArray(payload?.results);
-    return results
+    const normalized = results
       .slice(0, limit)
       .map((item) => normalizeSearchSong(item, 'itunes'))
       .filter(Boolean);
+    itunesSearchCache.set(cacheKey, { results: normalized, expiresAt: Date.now() + ITUNES_CACHE_TTL_MS });
+    return normalized;
   } catch {
     return [];
   }
@@ -492,25 +644,32 @@ async function fetchItunesSearchResults(query, limit = 12) {
 
 async function resolveSongSearch(query, limit = 12) {
   const providerOrder = (() => {
-    const selected = searchProvider === 'ytmusic' || searchProvider === 'itunes'
+    const selected = searchProvider === 'ytmusic' || searchProvider === 'itunes' || searchProvider === 'youtube'
       ? searchProvider
       : 'auto';
 
+    if (selected === 'youtube') {
+      return searchFallbackEnabled ? ['youtube', 'ytmusic', 'itunes'] : ['youtube'];
+    }
     if (selected === 'ytmusic') {
-      return searchFallbackEnabled ? ['ytmusic', 'itunes'] : ['ytmusic'];
+      return searchFallbackEnabled ? ['ytmusic', 'youtube', 'itunes'] : ['ytmusic'];
     }
     if (selected === 'itunes') {
-      return searchFallbackEnabled ? ['itunes', 'ytmusic'] : ['itunes'];
+      return searchFallbackEnabled ? ['itunes', 'youtube', 'ytmusic'] : ['itunes'];
     }
-    return searchFallbackEnabled ? ['ytmusic', 'itunes'] : ['ytmusic'];
+    return searchFallbackEnabled ? ['youtube', 'ytmusic', 'itunes'] : ['youtube'];
   })();
 
   let resolvedSource = 'none';
 
   for (const provider of providerOrder) {
-    let results = provider === 'ytmusic'
-      ? await fetchYtMusicSearchResults(query, limit)
-      : await fetchItunesSearchResults(query, limit);
+    let results = provider === 'youtube'
+      ? (await fetchYouTubeSearchResults({ query, limit }))
+          .map((item) => normalizeSearchSong(item, 'youtube'))
+          .filter(Boolean)
+      : provider === 'ytmusic'
+        ? await fetchYtMusicSearchResults(query, limit)
+        : await fetchItunesSearchResults(query, limit);
 
     // Enrich iTunes results with YouTube videoId
     if (provider === 'itunes' && results.length > 0) {
@@ -613,7 +772,7 @@ function normalizeSpotifyScraperMetadata(songTitle, artistName, spotifyScraper) 
     songDescription,
     albumName: albumName || null,
     releaseDate: releaseDate || null,
-    geniusUrl: spotifyUrl || null,
+    sourceUrl: spotifyUrl || null,
     annotationCount: annotations.length,
     topAnnotations: annotations,
   };
@@ -658,7 +817,7 @@ function normalizeYtMusicMetadata(songTitle, artistName, ytmusic) {
     songDescription: firstDefinedString(payload?.songDescription, payload?.description, payload?.lyrics).slice(0, 700),
     albumName: firstDefinedString(payload?.albumName, payload?.album) || null,
     releaseDate: firstDefinedString(payload?.releaseDate, payload?.year) || null,
-    geniusUrl: firstDefinedString(payload?.sourceUrl, payload?.ytmusicUrl, payload?.url, payload?.watchUrl) || null,
+    sourceUrl: firstDefinedString(payload?.sourceUrl, payload?.ytmusicUrl, payload?.url, payload?.watchUrl) || null,
     annotationCount: Number(payload?.annotationCount ?? topAnnotations.length ?? 0),
     topAnnotations,
   };
@@ -689,132 +848,241 @@ async function fetchYtMusicMetadata(songTitle, artistName = '') {
   }
 }
 
-// FIX: geniusRequest had an unclosed forEach loop. Added missing closing braces.
-async function geniusRequest(pathname, queryParams = {}) {
-  if (!geniusAccessToken) {
-    throw new Error('GENIUS_ACCESS_TOKEN is not configured on server.');
-  }
+async function fetchMusicBrainzMetadata(songTitle, artistName = '') {
+  const cleanTitle = sanitizeMetadataInput(songTitle);
+  const cleanArtist = sanitizeMetadataInput(artistName);
+  const cacheKey = `musicbrainz:${normalizeText(cleanTitle)}|${normalizeText(cleanArtist)}`;
+  const cached = getCachedMetadata(cacheKey);
+  if (cached) return cached;
 
-  const url = new URL(`${geniusBaseUrl}${pathname}`);
+  const queryTerms = [];
+  if (cleanTitle) queryTerms.push(`recording:"${cleanTitle}"`);
+  if (cleanArtist) queryTerms.push(`artist:"${cleanArtist}"`);
+  if (queryTerms.length === 0) return null;
 
-  Object.entries(queryParams).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== '') {
-      url.searchParams.set(key, String(value));
+  const url = new URL(`${musicBrainzBaseUrl.replace(/\/$/, '')}/recording/`);
+  url.searchParams.set('query', queryTerms.join(' AND '));
+  url.searchParams.set('fmt', 'json');
+  url.searchParams.set('limit', '5');
+
+  const payload = await fetchMusicBrainzJson(url.toString());
+  const recordings = Array.isArray(payload?.recordings) ? payload.recordings : [];
+  if (recordings.length === 0) return null;
+
+  const preferred = recordings.find((recording) => {
+    const recordingTitle = normalizeText(recording?.title);
+    const recordingArtist = normalizeText(recording?.['artist-credit']?.[0]?.artist?.name ?? recording?.artist_credit?.[0]?.artist?.name);
+    if (cleanArtist && recordingArtist !== normalizeText(cleanArtist)) {
+      return false;
     }
-  }); // FIX: was missing closing }); for forEach
+    return !cleanTitle || recordingTitle.includes(normalizeText(cleanTitle)) || normalizeText(cleanTitle).includes(recordingTitle);
+  }) ?? recordings[0];
 
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: {
-      Authorization: `Bearer ${geniusAccessToken}`,
-      Accept: 'application/json',
-    },
-  });
-
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok || payload?.meta?.status >= 400) {
-    const message = payload?.meta?.message || 'Genius request failed.';
-    throw new Error(message);
-  }
-
-  return payload?.response;
-}
-
-async function fetchGeniusMetadata(songTitle, artistName = '') {
-  const cacheKey = `${normalizeText(songTitle)}|${normalizeText(artistName)}`;
-  const cached = geniusMetadataCache.get(cacheKey);
-  const now = Date.now();
-  if (cached && cached.expiresAt > now) {
-    return cached.data;
-  }
-
-  const query = [songTitle, artistName].filter(Boolean).join(' ').trim();
-  if (!query) return null;
-
-  const search = await geniusRequest('/search', { q: query });
-  const hits = Array.isArray(search?.hits) ? search.hits : [];
-  const songHits = hits.filter((hit) => hit?.type === 'song').map((hit) => hit.result).filter(Boolean);
-
-  const preferred = songHits.find((result) => {
-    if (!artistName) {
-      return normalizeText(result?.title).includes(normalizeText(songTitle));
-    }
-    return normalizeText(result?.primary_artist?.name).includes(normalizeText(artistName));
-  }) || songHits[0];
-
-  if (!preferred?.id) return null;
-
-  const songResponse = await geniusRequest(`/songs/${preferred.id}`, { text_format: 'plain' });
-  const song = songResponse?.song;
-
-  const artistId = song?.primary_artist?.id;
-  let artist = null;
-  if (artistId) {
-    const artistResponse = await geniusRequest(`/artists/${artistId}`, { text_format: 'plain' });
-    artist = artistResponse?.artist ?? null;
-  }
-
-  const referentsResponse = await geniusRequest('/referents', {
-    song_id: preferred.id,
-    per_page: 5,
-    text_format: 'plain',
-  });
-
-  const referents = Array.isArray(referentsResponse?.referents) ? referentsResponse.referents : [];
-  const annotations = referents
-    .flatMap((referent) => {
-      const body = referent?.annotations?.[0]?.body;
-      const note = extractPlainText(body).trim();
-      const fragment = referent?.fragment || '';
-      if (!note) return [];
-      return [{ fragment, note }];
-    })
-    .slice(0, 3);
+  const artistCredit = Array.isArray(preferred?.['artist-credit']) ? preferred['artist-credit'] : [];
+  const primaryArtist = artistCredit[0]?.artist ?? null;
+  const release = Array.isArray(preferred?.releases) && preferred.releases.length > 0 ? preferred.releases[0] : null;
+  const releaseDate = release?.date ?? release?.['first-release-date'] ?? null;
+  const language = release?.['text-representation']?.language ?? release?.language ?? null;
+  const genreTags = Array.isArray(preferred?.tags)
+    ? preferred.tags
+        .map((tag) => tag?.name)
+        .filter((tag) => typeof tag === 'string' && tag.trim())
+        .slice(0, 3)
+    : [];
 
   const metadata = {
-    songId: String(song?.id ?? preferred.id),
-    title: song?.title ?? preferred.title ?? songTitle,
-    fullTitle: song?.full_title ?? preferred.full_title ?? '',
-    artistName: song?.primary_artist?.name ?? preferred?.primary_artist?.name ?? artistName,
-    artistId: artist?.id ? String(artist.id) : null,
-    artistImageUrl: artist?.image_url ?? null,
-    artistDescription: extractPlainText(artist?.description).slice(0, 500),
-    songDescription: extractPlainText(song?.description).slice(0, 700),
-    albumName: song?.album?.name ?? null,
-    releaseDate: song?.release_date_for_display ?? null,
-    geniusUrl: song?.url ?? preferred?.url ?? null,
-    annotationCount: referents.length,
-    topAnnotations: annotations,
+    source: 'musicbrainz',
+    songId: String(preferred?.id ?? `${normalizeText(cleanTitle)}|${normalizeText(cleanArtist)}`),
+    title: preferred?.title ?? cleanTitle,
+    fullTitle: cleanArtist ? `${cleanTitle} by ${cleanArtist}` : (cleanTitle || ''),
+    artistName: (primaryArtist?.name ?? cleanArtist) || 'Unknown Artist',
+    artistId: primaryArtist?.id ? String(primaryArtist.id) : null,
+    artistImageUrl: null,
+    artistDescription: '',
+    songDescription: preferred?.disambiguation
+      ? `MusicBrainz match: ${preferred.disambiguation}`
+      : 'MusicBrainz match found.',
+    albumName: release?.title ?? null,
+    releaseDate: releaseDate ? String(releaseDate) : null,
+    sourceUrl: release?.id ? `https://musicbrainz.org/release/${release.id}` : null,
+    annotationCount: 0,
+    topAnnotations: [],
+    genre: genreTags[0] ?? null,
+    language: typeof language === 'string' && language.trim() ? language.trim() : null,
+    originYear: parseYearFromDate(releaseDate),
   };
 
-  geniusMetadataCache.set(cacheKey, {
-    data: metadata,
-    expiresAt: now + 30 * 60_000,
-  });
-
+  setCachedMetadata(cacheKey, metadata, metadataCacheTtlMs);
   return metadata;
 }
 
-async function fetchGoogleSearchResults(query) {
-  if (!googleMetadataEnabled) return [];
+async function fetchLrclibLyrics(songTitle, artistName = '') {
+  const cleanTitle = sanitizeMetadataInput(songTitle);
+  const cleanArtist = sanitizeMetadataInput(artistName);
+  const cacheKey = `lrclib:${normalizeText(cleanTitle)}|${normalizeText(cleanArtist)}`;
+  const cached = getCachedMetadata(cacheKey);
+  if (cached) return cached;
 
-  const url = new URL('https://www.googleapis.com/customsearch/v1');
-  url.searchParams.set('key', googleCustomSearchApiKey);
-  url.searchParams.set('cx', googleCustomSearchCx);
-  url.searchParams.set('q', query);
-  url.searchParams.set('num', '5');
+  const url = new URL('https://lrclib.net/api/get');
+  if (cleanTitle) url.searchParams.set('track_name', cleanTitle);
+  if (cleanArtist) url.searchParams.set('artist_name', cleanArtist);
 
-  const response = await fetch(url, {
-    method: 'GET',
-    headers: { Accept: 'application/json' },
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+
+    if (!response.ok) return null;
+
+    const payload = await response.json().catch(() => null);
+    if (!payload) return null;
+
+    const plainLyrics = typeof payload?.plainLyrics === 'string' ? payload.plainLyrics.trim() : '';
+    const syncedLyrics = typeof payload?.syncedLyrics === 'string' ? payload.syncedLyrics.trim() : '';
+    const lyrics = plainLyrics || syncedLyrics;
+
+    if (!lyrics) return null;
+
+    const metadata = {
+      source: 'lrclib',
+      lyrics,
+      syncedLyrics: syncedLyrics || null,
+      albumName: typeof payload?.albumName === 'string' && payload.albumName.trim() ? payload.albumName.trim() : null,
+      sourceUrl: typeof payload?.url === 'string' && payload.url.trim() ? payload.url.trim() : null,
+    };
+
+    setCachedMetadata(cacheKey, metadata, lyricsCacheTtlMs);
+    return metadata;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchSerpFallbackMetadata(songTitle, artistName = '') {
+  const cleanTitle = sanitizeMetadataInput(songTitle);
+  const cleanArtist = sanitizeMetadataInput(artistName);
+  const cacheKey = `serp:${normalizeText(cleanTitle)}|${normalizeText(cleanArtist)}`;
+  const cached = getCachedMetadata(cacheKey);
+  if (cached) return cached;
+
+  const query = [cleanTitle, cleanArtist].filter(Boolean).join(' ').trim();
+  if (!query) return null;
+
+  const searchResults = await fetchSerpSearchResults(`${query} wikipedia genre language year lyrics`);
+  if (searchResults.length === 0) return null;
+
+  const sourcePayload = {
+    results: searchResults.map((item) => ({
+      title: stripHtmlTags(item?.title ?? ''),
+      link: typeof item?.link === 'string' ? item.link : '',
+      snippet: stripHtmlTags(item?.snippet ?? ''),
+    })),
+  };
+
+  const modelResponse = await callOpenRouterJson({
+    systemPrompt: [
+      'You are a music metadata extractor.',
+      'You receive search results and must return STRICT JSON only.',
+      'Use only the provided sources. Do not invent facts.',
+      'For lyrics, never output full copyrighted lyrics.',
+      'Return at most a short excerpt or summary if supported by the snippets.',
+      'Schema:',
+      '{',
+      '  "genre": "string|null",',
+      '  "language": "string|null",',
+      '  "originYear": "number|null",',
+      '  "songDescription": "string|null",',
+      '  "sourceUrl": "string|null"',
+      '}',
+    ].join('\n'),
+    userPayload: { songTitle: cleanTitle, artistName: cleanArtist, sources: sourcePayload },
   });
 
-  if (!response.ok) {
+  const bestSourceUrl = typeof modelResponse?.sourceUrl === 'string' && modelResponse.sourceUrl.trim()
+    ? modelResponse.sourceUrl.trim()
+    : sourcePayload.results[0]?.link ?? null;
+  const fallbackSnippet = sourcePayload.results[0]?.snippet || '';
+
+  const metadata = {
+    source: 'serp',
+    songId: `${normalizeText(cleanTitle)}|${normalizeText(cleanArtist)}` || cleanTitle,
+    title: cleanTitle,
+    fullTitle: cleanArtist ? `${cleanTitle} by ${cleanArtist}` : cleanTitle,
+    artistName: cleanArtist || 'Unknown Artist',
+    artistId: null,
+    artistImageUrl: null,
+    artistDescription: '',
+    songDescription: typeof modelResponse?.songDescription === 'string' && modelResponse.songDescription.trim()
+      ? modelResponse.songDescription.trim()
+      : fallbackSnippet,
+    albumName: null,
+    releaseDate: typeof modelResponse?.originYear === 'number' ? String(modelResponse.originYear) : null,
+    sourceUrl: bestSourceUrl,
+    annotationCount: 0,
+    topAnnotations: [],
+    genre: typeof modelResponse?.genre === 'string' && modelResponse.genre.trim() ? modelResponse.genre.trim() : null,
+    language: typeof modelResponse?.language === 'string' && modelResponse.language.trim() ? modelResponse.language.trim() : null,
+    originYear: typeof modelResponse?.originYear === 'number' ? modelResponse.originYear : null,
+  };
+
+  setCachedMetadata(cacheKey, metadata, metadataCacheTtlMs);
+  return metadata;
+}
+
+async function fetchSerpSearchResults(query) {
+  const cleanQuery = sanitizeMetadataInput(query);
+  if (!cleanQuery) return [];
+
+  try {
+    if (serpProvider === 'serper') {
+      if (!serpApiKey) return [];
+
+      const response = await fetch(serpBaseUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-KEY': serpApiKey,
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          q: cleanQuery,
+          gl: 'us',
+          hl: 'en',
+          num: 5,
+        }),
+      });
+
+      if (!response.ok) return [];
+      const payload = await response.json().catch(() => null);
+      const organic = Array.isArray(payload?.organic) ? payload.organic : [];
+      return organic;
+    }
+
+    if (!serpApiKey || !serpSearchEngineId) return [];
+
+    const url = new URL(serpBaseUrl);
+    url.searchParams.set('key', serpApiKey);
+    url.searchParams.set('cx', serpSearchEngineId);
+    url.searchParams.set('q', cleanQuery);
+    url.searchParams.set('num', '5');
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+
+    if (!response.ok) return [];
+
+    const payload = await response.json().catch(() => null);
+    return Array.isArray(payload?.items) ? payload.items : [];
+  } catch {
     return [];
   }
+}
 
-  const payload = await response.json().catch(() => null);
-  return Array.isArray(payload?.items) ? payload.items : [];
+async function fetchGoogleSearchResults(query) {
+  return fetchSerpSearchResults(query);
 }
 
 async function callOpenRouterJson({ systemPrompt, userPayload, temperature = 0.2 }) {
@@ -845,151 +1113,557 @@ async function callOpenRouterJson({ systemPrompt, userPayload, temperature = 0.2
   return extractJsonObject(content);
 }
 
-async function fetchGoogleMetadata(songTitle, artistName = '') {
-  const cacheKey = `${normalizeText(songTitle)}|${normalizeText(artistName)}`;
-  const cached = geniusMetadataCache.get(`google:${cacheKey}`);
+function uniqueStrings(values) {
+  return Array.from(new Set((values ?? []).filter((value) => typeof value === 'string' && value.trim())));
+}
+
+function stripYouTubeTitleDecorations(value) {
+  return stripHtmlTags(value)
+    .replace(/\s*[\[(][^)\]]*(official|lyrics|video|audio|visualizer|mv|hd)[^)\]]*[\])]/gi, ' ')
+    .replace(/\s*[-|:]\s*(official|music video|lyrics|audio|video|mv|hd).*$/i, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function parseYouTubeVideoTitle(rawTitle, channelTitle) {
+  const cleanTitle = stripYouTubeTitleDecorations(rawTitle) || stripHtmlTags(rawTitle) || 'YouTube Track';
+  const cleanChannel = stripHtmlTags(channelTitle) || 'YouTube';
+  const lowerChannel = normalizeText(cleanChannel);
+
+  const separators = [' - ', ' | ', ' : '];
+  for (const separator of separators) {
+    if (!cleanTitle.includes(separator)) continue;
+    const parts = cleanTitle.split(separator).map((part) => part.trim()).filter(Boolean);
+    if (parts.length < 2) continue;
+
+    const first = parts[0];
+    const second = parts[1];
+    const firstMatchesChannel = lowerChannel && normalizeText(first).includes(lowerChannel);
+    const secondMatchesChannel = lowerChannel && normalizeText(second).includes(lowerChannel);
+
+    if (firstMatchesChannel && !secondMatchesChannel) {
+      return { title: second, artist: cleanChannel };
+    }
+
+    if (secondMatchesChannel && !firstMatchesChannel) {
+      return { title: first, artist: cleanChannel };
+    }
+
+    return { title: first, artist: second || cleanChannel };
+  }
+
+  return { title: cleanTitle, artist: cleanChannel };
+}
+
+async function fetchYouTubeSearchResults({ query = '', relatedToVideoId = '', limit = 5 }) {
+  if (!youtubeApiKey) return [];
+
+  const normalizedQuery = typeof query === 'string' ? query.trim() : '';
+  const normalizedRelated = typeof relatedToVideoId === 'string' ? relatedToVideoId.trim() : '';
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 5, 10));
+  const cacheKey = `${normalizedRelated || normalizedQuery}|${safeLimit}`;
+  const cached = youtubeRecommendationCache.get(cacheKey);
   const now = Date.now();
   if (cached && cached.expiresAt > now) {
-    return cached.data;
+    return cached.items;
   }
 
-  const query = [songTitle, artistName].filter(Boolean).join(' ').trim();
-  if (!query || !googleMetadataEnabled) return null;
+  const url = new URL('https://www.googleapis.com/youtube/v3/search');
+  url.searchParams.set('part', 'snippet');
+  url.searchParams.set('type', 'video');
+  url.searchParams.set('order', 'relevance');
+  url.searchParams.set('maxResults', String(safeLimit));
+  url.searchParams.set('videoEmbeddable', 'true');
+  if (normalizedQuery) {
+    url.searchParams.set('q', normalizedQuery);
+  }
+  if (normalizedRelated) {
+    url.searchParams.set('relatedToVideoId', normalizedRelated);
+  }
+  url.searchParams.set('key', youtubeApiKey);
 
-  const metadataResults = await fetchGoogleSearchResults(`${query} wikipedia genre language year`);
-  const lyricsResults = await fetchGoogleSearchResults(`${query} lyrics`);
-  if (metadataResults.length === 0 && lyricsResults.length === 0) return null;
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
 
-  const sources = {
-    metadata: metadataResults.slice(0, 5).map((item) => ({
-      title: stripHtmlTags(item?.title ?? ''),
-      link: typeof item?.link === 'string' ? item.link : '',
-      snippet: stripHtmlTags(item?.snippet ?? ''),
-    })),
-    lyrics: lyricsResults.slice(0, 5).map((item) => ({
-      title: stripHtmlTags(item?.title ?? ''),
-      link: typeof item?.link === 'string' ? item.link : '',
-      snippet: stripHtmlTags(item?.snippet ?? ''),
-    })),
+    if (!response.ok) {
+      return [];
+    }
+
+    const payload = await response.json().catch(() => null);
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    youtubeRecommendationCache.set(cacheKey, {
+      items,
+      expiresAt: now + 15 * 60_000,
+    });
+    return items;
+  } catch (error) {
+    console.error('[YouTubeRecommendations] Search failed:', error);
+    return [];
+  }
+}
+
+function buildYouTubeRecommendationQueries({ seedSongs, topGenre, topLanguage, topMood, topActivity, currentSong }) {
+  const queries = [];
+
+  if (currentSong?.videoId && currentSong.title) {
+    queries.push({
+      kind: 'related',
+      relatedToVideoId: currentSong.videoId,
+      label: `related:${currentSong.videoId}`,
+    });
+  }
+
+  seedSongs.slice(0, 3).forEach((seed) => {
+    const seedQueryParts = uniqueStrings([
+      seed.artist,
+      seed.genre,
+      seed.language,
+      seed.moods?.[0],
+    ]);
+    if (seedQueryParts.length > 0) {
+      queries.push({ kind: 'query', query: `${seedQueryParts.join(' ')} official audio`.trim() });
+    }
+    if (seed.artist) {
+      queries.push({ kind: 'query', query: `${seed.artist} official audio`.trim() });
+    }
+    if (seed.genre && seed.moods?.[0]) {
+      queries.push({ kind: 'query', query: `${seed.genre} ${seed.moods[0]} music`.trim() });
+    }
+  });
+
+  if (topGenre) {
+    queries.push({
+      kind: 'query',
+      query: [topGenre, topLanguage, topMood].filter(Boolean).join(' '),
+    });
+    queries.push({
+      kind: 'query',
+      query: [topGenre, topActivity, 'music'].filter(Boolean).join(' '),
+    });
+  }
+
+  if (topMood) {
+    queries.push({
+      kind: 'query',
+      query: [topMood, topGenre, 'songs'].filter(Boolean).join(' '),
+    });
+  }
+
+  if (queries.length === 0) {
+    queries.push({ kind: 'query', query: 'trending music official audio' });
+  }
+
+  return queries.filter((item) => item.kind === 'related' || (item.query && item.query.trim()));
+}
+
+function makeSongFromYouTubeItem(item) {
+  const videoId = typeof item?.id?.videoId === 'string' ? item.id.videoId.trim() : '';
+  if (!videoId) return null;
+
+  const rawTitle = typeof item?.snippet?.title === 'string' ? item.snippet.title : '';
+  const channelTitle = typeof item?.snippet?.channelTitle === 'string' ? item.snippet.channelTitle : 'YouTube';
+  const parsed = parseYouTubeVideoTitle(rawTitle, channelTitle);
+  const title = parsed.title || rawTitle || 'YouTube Track';
+  const artist = parsed.artist || channelTitle || 'YouTube';
+
+  return {
+    id: `yt-${videoId}`,
+    title,
+    artist,
+    album: channelTitle || 'YouTube',
+    coverUrl: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+    duration: 0,
+    isLiked: false,
+    videoId,
   };
+}
 
-  const modelResponse = await callOpenRouterJson({
+function scoreYouTubeCandidate(candidate, profile) {
+  let score = 0;
+  const candidateTitle = normalizeText(candidate.title);
+  const candidateArtist = normalizeText(candidate.artist);
+  const candidateAlbum = normalizeText(candidate.album);
+
+  if (candidateArtist) score += 5;
+
+  profile.seedSongs.forEach((seed) => {
+    const seedArtist = normalizeText(seed.artist);
+    const seedTitle = normalizeText(seed.title);
+    const seedGenre = normalizeText(seed.genre);
+    const seedLanguage = normalizeText(seed.language);
+    const seedMood = Array.isArray(seed.moods) ? seed.moods.map(normalizeText).filter(Boolean)[0] : '';
+    const seedActivity = Array.isArray(seed.activities) ? seed.activities.map(normalizeText).filter(Boolean)[0] : '';
+
+    if (seedArtist && (candidateArtist.includes(seedArtist) || candidateTitle.includes(seedArtist) || candidateAlbum.includes(seedArtist))) {
+      score += 60;
+    }
+    if (seedTitle && (candidateTitle.includes(seedTitle) || candidateArtist.includes(seedTitle))) {
+      score += 20;
+    }
+    if (seedGenre && (candidateTitle.includes(seedGenre) || candidateAlbum.includes(seedGenre))) {
+      score += 16;
+    }
+    if (seedLanguage && (candidateTitle.includes(seedLanguage) || candidateAlbum.includes(seedLanguage))) {
+      score += 10;
+    }
+    if (seedMood && candidateTitle.includes(seedMood)) {
+      score += 6;
+    }
+    if (seedActivity && candidateTitle.includes(seedActivity)) {
+      score += 5;
+    }
+  });
+
+  if (candidateTitle.includes('official')) score += 5;
+  if (candidateTitle.includes('audio')) score += 3;
+
+  return score;
+}
+
+async function rerankYouTubeRecommendationsWithTrinity(candidates, profileSummary) {
+  if (!openRouterApiKey || candidates.length === 0) return candidates;
+
+  const response = await callOpenRouterJson({
     systemPrompt: [
-      'You are Trinity, a music metadata extractor.',
-      'You receive Google search results and must return STRICT JSON only.',
-      'Use only the provided sources. Do not invent facts.',
-      'For lyrics, never output full copyrighted lyrics.',
-      'Return at most a short lyric excerpt of 1-2 short lines if it is directly supported by the snippets. Otherwise use null.',
-      'Schema:',
-      '{',
-      '  "genre": "string|null",',
-      '  "language": "string|null",',
-      '  "originYear": "number|null",',
-      '  "songDescription": "string|null",',
-      '  "sourceUrl": "string|null",',
-      '  "artistName": "string|null",',
-      '  "title": "string|null"',
-      '}',
-      'Prefer Wikipedia or official sources for metadata.',
+      'You are Trinity, a music recommendation assistant.',
+      'Return STRICT JSON only.',
+      'Rank the provided YouTube candidate songs by how well they match the user profile.',
+      'Only use the provided candidate ids.',
+      'Return schema: { "songIds": ["id1","id2",...]}',
     ].join('\n'),
-    userPayload: { songTitle, artistName, sources },
+    userPayload: {
+      profileSummary,
+      candidates: candidates.map((candidate) => ({
+        id: candidate.id,
+        title: candidate.title,
+        artist: candidate.artist,
+        album: candidate.album,
+        videoId: candidate.videoId,
+      })),
+    },
+    temperature: 0.1,
   });
 
-  const bestSourceUrl = modelResponse?.sourceUrl
-    || sources.metadata[0]?.link
-    || sources.lyrics[0]?.link
-    || null;
+  const rankedIds = Array.isArray(response?.songIds)
+    ? response.songIds.filter((id) => candidates.some((candidate) => candidate.id === id))
+    : [];
 
-  const fallbackSnippet = sources.metadata[0]?.snippet || sources.lyrics[0]?.snippet || '';
-  const metadata = {
-    source: 'google',
-    songId: `${normalizeText(songTitle)}|${normalizeText(artistName)}` || songTitle,
-    title: typeof modelResponse?.title === 'string' && modelResponse.title.trim() ? modelResponse.title.trim() : songTitle,
-    fullTitle: artistName ? `${songTitle} by ${artistName}` : songTitle,
-    artistName: typeof modelResponse?.artistName === 'string' && modelResponse.artistName.trim()
-      ? modelResponse.artistName.trim()
-      : artistName || 'Unknown Artist',
-    artistId: null,
-    artistImageUrl: null,
-    artistDescription: '',
-    songDescription: typeof modelResponse?.songDescription === 'string' && modelResponse.songDescription.trim()
-      ? modelResponse.songDescription.trim()
-      : fallbackSnippet,
-    albumName: null,
-    releaseDate: typeof modelResponse?.originYear === 'number' ? String(modelResponse.originYear) : null,
-    geniusUrl: typeof bestSourceUrl === 'string' && bestSourceUrl.trim() ? bestSourceUrl : null,
-    annotationCount: 0,
-    topAnnotations: [],
-    genre: typeof modelResponse?.genre === 'string' && modelResponse.genre.trim() ? modelResponse.genre.trim() : null,
-    language: typeof modelResponse?.language === 'string' && modelResponse.language.trim() ? modelResponse.language.trim() : null,
-    originYear: typeof modelResponse?.originYear === 'number' ? modelResponse.originYear : null,
-  };
+  if (rankedIds.length === 0) return candidates;
 
-  if (!metadata.genre || !metadata.language || !metadata.originYear || !metadata.songDescription) {
-    metadata.genre ||= null;
-    metadata.language ||= null;
-    metadata.originYear ||= null;
-    metadata.songDescription ||= fallbackSnippet;
+  const candidateMap = new Map(candidates.map((candidate) => [candidate.id, candidate]));
+  const ranked = [];
+  rankedIds.forEach((id) => {
+    const item = candidateMap.get(id);
+    if (item) {
+      ranked.push(item);
+      candidateMap.delete(id);
+    }
+  });
+
+  return [...ranked, ...Array.from(candidateMap.values())];
+}
+
+async function fetchPythonRecommendations({ songs, likedSongIds, recentlyPlayedIds, currentSongId, limit }) {
+  if (!recommenderServiceUrl) return null;
+
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => controller.abort(), recommenderServiceTimeoutMs);
+
+  try {
+    const response = await fetch(recommenderServiceUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        catalog: {
+          songs,
+        },
+        likedSongIds,
+        recentlyPlayedIds,
+        currentSongId,
+        limit,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) return null;
+
+    const payload = await response.json().catch(() => null);
+    const serviceSongs = Array.isArray(payload?.songs) ? payload.songs : [];
+    const songIds = Array.isArray(payload?.songIds) ? payload.songIds : [];
+
+    if (serviceSongs.length === 0 && songIds.length === 0) {
+      return null;
+    }
+
+    return {
+      songs: serviceSongs,
+      songIds,
+      source: typeof payload?.source === 'string' ? payload.source : 'python-ml-service',
+    };
+  } catch (error) {
+    console.warn('[Recommendations] Python service unavailable, falling back locally.', error?.message ?? error);
+    return null;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+}
+
+async function recommendSongsFromYouTube({
+  songs,
+  likedSongIds = [],
+  recentlyPlayedIds = [],
+  currentSongId = null,
+  limit = 8,
+}) {
+  const serviceResult = await fetchPythonRecommendations({
+    songs,
+    likedSongIds,
+    recentlyPlayedIds,
+    currentSongId,
+    limit,
+  });
+
+  if (serviceResult) {
+    return serviceResult;
   }
 
-  geniusMetadataCache.set(`google:${cacheKey}`, {
-    data: metadata,
-    expiresAt: now + 30 * 60_000,
+  if (!youtubeApiKey) {
+    const fallback = await recommendSongsFromCatalog({
+      songs,
+      likedSongIds,
+      recentlyPlayedIds,
+      currentSongId,
+      limit,
+    });
+
+    return {
+      ...fallback,
+      songs: fallback.songIds
+        .map((songId) => songs.find((song) => song.id === songId))
+        .filter(Boolean),
+      source: fallback.source,
+    };
+  }
+
+  const profile = buildRecommendationProfile(songs, likedSongIds, recentlyPlayedIds, currentSongId);
+  const currentSong = songs.find((song) => song.id === currentSongId) ?? null;
+  const blockedIds = new Set([...(likedSongIds || []), ...(recentlyPlayedIds || []), currentSongId].filter(Boolean));
+  const currentVideoId = currentSong?.videoId && isValidYouTubeVideoId(currentSong.videoId) ? currentSong.videoId : null;
+
+  const genreCounts = new Map();
+  const languageCounts = new Map();
+  const moodCounts = new Map();
+  const activityCounts = new Map();
+  const artistCounts = new Map();
+
+  profile.seedSongs.forEach((seed) => {
+    if (seed.genre) genreCounts.set(seed.genre, (genreCounts.get(seed.genre) ?? 0) + 1);
+    if (seed.language) languageCounts.set(seed.language, (languageCounts.get(seed.language) ?? 0) + 1);
+    if (Array.isArray(seed.moods)) seed.moods.forEach((mood) => moodCounts.set(mood, (moodCounts.get(mood) ?? 0) + 1));
+    if (Array.isArray(seed.activities)) seed.activities.forEach((activity) => activityCounts.set(activity, (activityCounts.get(activity) ?? 0) + 1));
+    artistCounts.set(seed.artist, (artistCounts.get(seed.artist) ?? 0) + 1);
   });
 
-  return metadata;
+  const topGenre = Array.from(genreCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  const topLanguage = Array.from(languageCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  const topMood = Array.from(moodCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  const topActivity = Array.from(activityCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+
+  const queries = buildYouTubeRecommendationQueries({
+    seedSongs: profile.seedSongs,
+    topGenre,
+    topLanguage,
+    topMood,
+    topActivity,
+    currentSong,
+  });
+
+  const candidateMap = new Map();
+
+  if (currentVideoId) {
+    const relatedItems = await fetchYouTubeSearchResults({ relatedToVideoId: currentVideoId, limit: Math.min(5, limit) });
+    relatedItems.forEach((item) => {
+      const song = makeSongFromYouTubeItem(item);
+      if (!song || blockedIds.has(song.id)) return;
+      candidateMap.set(song.videoId, {
+        song,
+        source: 'related',
+      });
+    });
+  }
+
+  for (const queryDescriptor of queries) {
+    if (queryDescriptor.kind !== 'query') continue;
+    const items = await fetchYouTubeSearchResults({ query: queryDescriptor.query, limit: Math.min(5, limit) });
+    items.forEach((item) => {
+      const song = makeSongFromYouTubeItem(item);
+      if (!song || blockedIds.has(song.id) || candidateMap.has(song.videoId)) return;
+      candidateMap.set(song.videoId, {
+        song,
+        source: 'query',
+      });
+    });
+  }
+
+  let candidates = Array.from(candidateMap.values()).map((entry) => ({
+    ...entry.song,
+    _source: entry.source,
+    _score: scoreYouTubeCandidate(entry.song, profile) + (entry.source === 'related' ? 10 : 0),
+  }));
+
+  candidates.sort((a, b) => b._score - a._score);
+
+  const profileSummary = {
+    likedSongIds,
+    recentlyPlayedIds,
+    currentSongId,
+    seedSongs: profile.seedSongs.map((song) => ({
+      id: song.id,
+      title: song.title,
+      artist: song.artist,
+      genre: song.genre,
+      language: song.language,
+      energy: song.energy,
+    })),
+    topGenre,
+    topLanguage,
+    topMood,
+    topActivity,
+  };
+
+  candidates = await rerankYouTubeRecommendationsWithTrinity(candidates, profileSummary).catch(() => candidates);
+
+  if (candidates.length === 0) {
+    const fallback = await recommendSongsFromCatalog({
+      songs,
+      likedSongIds,
+      recentlyPlayedIds,
+      currentSongId,
+      limit,
+    });
+
+    return {
+      ...fallback,
+      songs: fallback.songIds
+        .map((songId) => songs.find((song) => song.id === songId))
+        .filter(Boolean),
+      source: fallback.source,
+    };
+  }
+
+  const selected = candidates.slice(0, limit).map((candidate) => {
+    const { _score, _source, ...song } = candidate;
+    return song;
+  });
+
+  return {
+    songIds: selected.map((song) => song.id),
+    songs: selected,
+    source: openRouterApiKey ? 'youtube-trinity' : 'youtube',
+  };
 }
 
 async function resolveMetadata({ songTitle, artistName = '', spotifyScraper = null }) {
-  const adaptedSpotify = normalizeSpotifyScraperMetadata(songTitle, artistName, spotifyScraper);
+  const cleanTitle = sanitizeMetadataInput(songTitle);
+  const cleanArtist = sanitizeMetadataInput(artistName);
+  const adaptedSpotify = normalizeSpotifyScraperMetadata(cleanTitle, cleanArtist, spotifyScraper);
   if (adaptedSpotify) return adaptedSpotify;
 
-  const providerOrder = (() => {
-    const selected = metadataProvider === 'ytmusic' || metadataProvider === 'genius' || metadataProvider === 'google'
-      ? metadataProvider
-      : 'auto';
+  const cacheKey = `resolve:${normalizeText(cleanTitle)}|${normalizeText(cleanArtist)}`;
+  const cached = getCachedMetadata(cacheKey);
+  if (cached) {
+    return cached;
+  }
 
-    if (selected === 'google') {
-      return googleMetadataEnabled
-        ? ['google', 'genius', 'ytmusic']
-        : ['genius', 'ytmusic'];
-    }
-    if (selected === 'ytmusic') {
-      return metadataFallbackEnabled ? ['ytmusic', 'google', 'genius'] : ['ytmusic'];
-    }
-    if (selected === 'genius') {
-      return metadataFallbackEnabled ? ['genius', 'google', 'ytmusic'] : ['genius'];
-    }
-    if (googleMetadataEnabled) {
-      return metadataFallbackEnabled ? ['google', 'genius', 'ytmusic'] : ['google'];
-    }
-    return metadataFallbackEnabled ? ['genius', 'ytmusic'] : ['genius'];
-  })();
+  const baseMetadata = {
+    source: 'musicbrainz',
+    songId: `${normalizeText(cleanTitle)}|${normalizeText(cleanArtist)}` || cleanTitle,
+    title: cleanTitle || 'Unknown Title',
+    fullTitle: cleanArtist ? `${cleanTitle} by ${cleanArtist}` : cleanTitle || 'Unknown Title',
+    artistName: cleanArtist || 'Unknown Artist',
+    artistId: null,
+    artistImageUrl: null,
+    artistDescription: '',
+    songDescription: '',
+    albumName: null,
+    releaseDate: null,
+    sourceUrl: null,
+    annotationCount: 0,
+    topAnnotations: [],
+    genre: null,
+    language: null,
+    originYear: null,
+  };
 
-  for (const provider of providerOrder) {
-    if (provider === 'google') {
-      const googleMetadata = await fetchGoogleMetadata(songTitle, artistName).catch(() => null);
-      if (googleMetadata) {
-        return googleMetadata;
-      }
-      continue;
-    }
+  const musicBrainzMetadata = await fetchMusicBrainzMetadata(cleanTitle, cleanArtist).catch(() => null);
+  const lrclibMetadata = await fetchLrclibLyrics(cleanTitle, cleanArtist).catch(() => null);
 
-    if (provider === 'genius') {
-      const geniusMetadata = await fetchGeniusMetadata(songTitle, artistName).catch(() => null);
-      if (geniusMetadata) {
-        return { ...geniusMetadata, source: 'genius' };
-      }
-      continue;
-    }
+  const metadata = {
+    ...baseMetadata,
+    ...(musicBrainzMetadata ?? {}),
+  };
 
-    if (provider === 'ytmusic') {
-      const ytmusicMetadata = await fetchYtMusicMetadata(songTitle, artistName);
-      if (ytmusicMetadata) return ytmusicMetadata;
+  if (lrclibMetadata?.lyrics) {
+    metadata.songDescription = lrclibMetadata.lyrics;
+  } else if (musicBrainzMetadata?.songDescription) {
+    metadata.songDescription = musicBrainzMetadata.songDescription;
+  }
+  if (lrclibMetadata?.syncedLyrics) {
+    metadata.syncedLyrics = lrclibMetadata.syncedLyrics;
+  }
+
+  if (!metadata.albumName && lrclibMetadata?.albumName) {
+    metadata.albumName = lrclibMetadata.albumName;
+  }
+
+  if (!metadata.sourceUrl && lrclibMetadata?.sourceUrl) {
+    metadata.sourceUrl = lrclibMetadata.sourceUrl;
+  }
+
+  if (metadataFallbackEnabled && (!metadata.genre || !metadata.language || !metadata.originYear || !metadata.songDescription)) {
+    const serpMetadata = await fetchSerpFallbackMetadata(cleanTitle, cleanArtist).catch(() => null);
+    if (serpMetadata) {
+      metadata.genre ||= serpMetadata.genre ?? null;
+      metadata.language ||= serpMetadata.language ?? null;
+      metadata.originYear ||= serpMetadata.originYear ?? null;
+      metadata.releaseDate ||= serpMetadata.releaseDate ?? null;
+      metadata.songDescription ||= serpMetadata.songDescription ?? '';
+      metadata.sourceUrl ||= serpMetadata.sourceUrl ?? null;
+      metadata.source = serpMetadata.source === 'serp'
+        ? 'MusicBrainz + LRCLIB + SERP'
+        : metadata.source;
     }
   }
 
-  return null;
+  if (openRouterApiKey) {
+    metadata.source = metadata.source === 'MusicBrainz + LRCLIB + SERP'
+      ? 'MusicBrainz + LRCLIB + Trinity + SERP'
+      : 'MusicBrainz + LRCLIB + Trinity';
+  }
+
+  if (!metadata.songDescription) {
+    metadata.songDescription = lrclibMetadata?.lyrics ?? '';
+  }
+
+  if (!metadata.songDescription && metadataFallbackEnabled) {
+    const serpMetadata = await fetchSerpFallbackMetadata(cleanTitle, cleanArtist).catch(() => null);
+    if (serpMetadata?.songDescription) {
+      metadata.songDescription = serpMetadata.songDescription;
+    }
+  }
+
+  if (!metadata.songDescription) {
+    metadata.songDescription = `Metadata resolved for ${cleanTitle || 'unknown song'}.`;
+  }
+
+  setCachedMetadata(cacheKey, metadata, metadataCacheTtlMs);
+  return metadata;
 }
 
 function extractJsonObject(rawText) {
@@ -1360,6 +2034,7 @@ app.get('/api/health', (_req, res) => {
 
   res.json({
     ok: true,
+    apiVersion: 2,
     service: 'resend-api',
     mailReady,
     resetReady,
@@ -1463,31 +2138,6 @@ app.post('/api/send-password-reset', passwordResetLimiter, async (req, res) => {
   }
 });
 
-app.get('/api/genius/metadata', geniusLimiter, async (req, res) => {
-  try {
-    const songTitle = req.query.songTitle;
-    const artistName = req.query.artistName;
-
-    if (!songTitle || typeof songTitle !== 'string') {
-      return res.status(400).json({ error: 'songTitle query parameter is required.' });
-    }
-
-    const metadata = await resolveMetadata({
-      songTitle,
-      artistName: typeof artistName === 'string' ? artistName : '',
-    });
-
-    if (!metadata) {
-      return res.status(404).json({ error: 'No Genius metadata found for this song.' });
-    }
-
-    return res.json({ metadata });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown server error.';
-    return res.status(500).json({ error: message });
-  }
-});
-
 app.post('/api/metadata/resolve', metadataLimiter, async (req, res) => {
   try {
     const { songTitle, artistName = '', spotifyScraper = null } = req.body ?? {};
@@ -1522,7 +2172,7 @@ app.post('/api/recommendations', aiLimiter, async (req, res) => {
     }
 
     const safeLimit = Math.max(1, Math.min(Number(limit) || 8, 12));
-    const result = await recommendSongsFromCatalog({
+    const result = await recommendSongsFromYouTube({
       songs: catalog.songs,
       likedSongIds: Array.isArray(likedSongIds) ? likedSongIds : [],
       recentlyPlayedIds: Array.isArray(recentlyPlayedIds) ? recentlyPlayedIds : [],
@@ -1530,7 +2180,38 @@ app.post('/api/recommendations', aiLimiter, async (req, res) => {
       limit: safeLimit,
     });
 
-    return res.json(result);
+    return res.json({
+      ...result,
+      songs: Array.isArray(result.songs) ? result.songs : [],
+      songIds: Array.isArray(result.songIds) ? result.songIds : [],
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown server error.';
+    return res.status(500).json({ error: message });
+  }
+});
+
+app.post('/api/recommendation-history', generalApiLimiter, async (req, res) => {
+  try {
+    const { eventType, songId, likedSongIds = [], recentlyPlayedIds = [], currentSongId = null } = req.body ?? {};
+
+    if (eventType !== 'play' && eventType !== 'like') {
+      return res.status(400).json({ error: 'eventType must be play or like.' });
+    }
+
+    if (!songId || typeof songId !== 'string') {
+      return res.status(400).json({ error: 'songId is required.' });
+    }
+
+    await appendRecommendationHistory({
+      eventType,
+      songId,
+      likedSongIds: Array.isArray(likedSongIds) ? likedSongIds.filter((id) => typeof id === 'string') : [],
+      recentlyPlayedIds: Array.isArray(recentlyPlayedIds) ? recentlyPlayedIds.filter((id) => typeof id === 'string') : [],
+      currentSongId: typeof currentSongId === 'string' ? currentSongId : null,
+    });
+
+    return res.json({ success: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown server error.';
     return res.status(500).json({ error: message });
@@ -1574,7 +2255,7 @@ app.post('/api/search/songs', searchLimiter, async (req, res) => {
     if (!process.env.YOUTUBE_API_KEY) {
       console.warn('[API] Missing YOUTUBE_API_KEY');
     }
-    const { query, limit = 12 } = req.body ?? {};
+    const { query, limit = 12, country = '' } = req.body ?? {};
 
     if (!query || typeof query !== 'string') {
       return res.status(400).json({ error: 'query is required.' });
@@ -1586,7 +2267,8 @@ app.post('/api/search/songs', searchLimiter, async (req, res) => {
     }
 
     const safeLimit = Math.max(1, Math.min(Number(limit) || 12, 24));
-    let results = await fetchItunesSearchResults(normalizedQuery, safeLimit);
+    const safeCountry = typeof country === 'string' ? country.trim() : '';
+    let results = await fetchItunesSearchResults(normalizedQuery, safeLimit, safeCountry);
     if (!results || results.length === 0) {
       console.warn('[API] No iTunes results for query:', normalizedQuery);
       return res.json({ source: 'itunes', results: [] });
@@ -1626,27 +2308,30 @@ app.post('/api/ai-curator', aiLimiter, async (req, res) => {
 
     const fallback = heuristicCurator(prompt, songs, playlists, resultSet, catalog.albums ?? []);
 
-    let geniusPromptContext = null;
-    let googlePromptContext = null;
+    let metadataPromptContext = null;
+    let serpPromptContext = null;
     const promptMatch = songs.find((song) => normalizeText(prompt).includes(normalizeText(song.title)));
     if (promptMatch) {
       try {
-        geniusPromptContext = await fetchGeniusMetadata(promptMatch.title, promptMatch.artist);
+        metadataPromptContext = await resolveMetadata({
+          songTitle: promptMatch.title,
+          artistName: promptMatch.artist,
+        });
       } catch {
-        geniusPromptContext = null;
+        metadataPromptContext = null;
       }
     }
 
-    if (googleMetadataEnabled) {
+    if (serpApiKey) {
       try {
-        const googleResults = await fetchGoogleSearchResults(prompt);
-        googlePromptContext = googleResults.slice(0, 5).map((item) => ({
+        const serpResults = await fetchSerpSearchResults(prompt);
+        serpPromptContext = serpResults.slice(0, 5).map((item) => ({
           title: stripHtmlTags(item?.title ?? ''),
           link: typeof item?.link === 'string' ? item.link : '',
           snippet: stripHtmlTags(item?.snippet ?? ''),
         }));
       } catch {
-        googlePromptContext = null;
+        serpPromptContext = null;
       }
     }
 
@@ -1688,8 +2373,8 @@ app.post('/api/ai-curator', aiLimiter, async (req, res) => {
               prompt,
               searchResultSongIds: Array.isArray(searchResultSongIds) ? searchResultSongIds : [],
               catalog,
-              geniusPromptContext,
-              googlePromptContext,
+              metadataPromptContext,
+              serpPromptContext,
             }),
           },
         ],
@@ -1705,21 +2390,206 @@ app.post('/api/ai-curator', aiLimiter, async (req, res) => {
     const parsed = extractJsonObject(content);
     const result = sanitizeAiResult(parsed, songs, playlists, fallback);
 
-    let geniusDetails = null;
+    let metadataDetails = null;
     if (result.details?.songId) {
       const detailSong = songs.find((song) => song.id === result.details.songId);
       if (detailSong) {
         try {
-          geniusDetails = await fetchGeniusMetadata(detailSong.title, detailSong.artist);
+          metadataDetails = await resolveMetadata({
+            songTitle: detailSong.title,
+            artistName: detailSong.artist,
+          });
         } catch {
-          geniusDetails = null;
+          metadataDetails = null;
         }
       }
     }
 
     return res.json({
       ...result,
-      geniusDetails,
+      metadataDetails,
+      model: openRouterModel,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown server error.';
+    return res.status(500).json({ error: message });
+  }
+});
+
+function compactSong(song) {
+  if (!song || typeof song !== 'object') return null;
+  return {
+    title: typeof song.title === 'string' ? song.title : '',
+    artist: typeof song.artist === 'string' ? song.artist : '',
+    genre: typeof song.genre === 'string' ? song.genre : '',
+    year: typeof song.releaseYear === 'number' ? song.releaseYear : null,
+  };
+}
+
+app.post('/api/ai-curator/chat', aiLimiter, async (req, res) => {
+  try {
+    const {
+      prompt,
+      currentSong = null,
+      likedSongs = [],
+      recentSongs = [],
+      preferredLanguages = [],
+      responseLanguage = 'English',
+    } = req.body ?? {};
+    const safeResponseLanguage = responseLanguage === 'Hindi' ? 'Hindi' : 'English';
+
+    if (!prompt || typeof prompt !== 'string' || prompt.trim().length < 2) {
+      return res.status(400).json({ error: 'A prompt is required.' });
+    }
+
+    if (!openRouterApiKey) {
+      return res.status(503).json({
+        error: 'AI curator is not configured. Add OPENROUTER_API_KEY to your environment.',
+      });
+    }
+
+    const compactCurrent = compactSong(currentSong);
+    const compactLiked = Array.isArray(likedSongs) ? likedSongs.slice(0, 12).map(compactSong).filter(Boolean) : [];
+    const compactRecent = Array.isArray(recentSongs) ? recentSongs.slice(0, 12).map(compactSong).filter(Boolean) : [];
+
+    const systemPrompt = [
+      'You are a friendly and knowledgeable music curator named "Whisky".',
+      `Respond ONLY in ${safeResponseLanguage}. ${
+        safeResponseLanguage === 'Hindi'
+          ? 'Use natural conversational Hindi in Devanagari script for responseText, facts, and the playlist name and description. Keep proper nouns (artist names, song titles) in their original spelling — do NOT transliterate them. Use Hinglish only if a word has no common Devanagari equivalent.'
+          : 'Use natural conversational English.'
+      }`,
+      'You ONLY discuss music, songs, artists, albums, genres, music history, music industry, soundtracks, and movies/films when relevant to their soundtrack or featured songs.',
+      'You DO NOT answer questions outside of these topics. If a user asks anything off-topic (general trivia, news, math, code, personal advice, weather, politics, religion, etc.), respond politely declining and steer them back to music with an example question.',
+      'Return STRICT JSON only — no markdown fences, no commentary outside the JSON.',
+      'Schema:',
+      '{',
+      '  "intent": "facts" | "playlist" | "explain" | "chat" | "off_topic",',
+      '  "responseText": "2-4 friendly sentences answering the user. Plain text, no JSON.",',
+      '  "facts": ["fact 1", "fact 2", "fact 3"],',
+      '  "playlist": {',
+      '    "name": "Short evocative playlist name",',
+      '    "description": "1-2 sentence description",',
+      '    "tracks": [ {"title": "Song Title", "artist": "Artist Name", "reason": "why it fits"} ]',
+      '  } | null',
+      '}',
+      'Rules:',
+      '- Use intent="off_topic" if the user asks anything outside of music, songs, artists, albums, soundtracks, or films-as-music. responseText should briefly decline and offer 2 sample music questions. facts=[], playlist=null.',
+      '- Use "facts" with 3-5 specific, true, interesting facts about an artist, song, album, music genre, or movie soundtrack the user asks about. Never invent facts. If unsure, leave facts empty and explain that in responseText.',
+      '- Use "playlist" with 8-12 real, popular songs by named real artists when the user wants a mix, vibe, recommendation, or movie-soundtrack-style mix. Mix well-known and adjacent picks. Match the user\'s preferred languages and the current/recent listening when context is given.',
+      '- Movies/films are in scope ONLY for their music: soundtrack, score, featured songs, composer, music director, playback singers. Decline questions about plot, cast, reviews, etc.',
+      '- For chit-chat or short music clarifications, set facts=[] and playlist=null.',
+      '- Never include track ids — only title and artist as the listener would type them.',
+      '- Keep responseText warm, concrete, and short.',
+    ].join('\n');
+
+    const userPayload = {
+      prompt,
+      preferredLanguages,
+      currentSong: compactCurrent,
+      likedSongs: compactLiked,
+      recentSongs: compactRecent,
+    };
+
+    let parsed = null;
+    try {
+      const response = await fetch(`${openRouterBaseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${openRouterApiKey}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': appUrl,
+          'X-Title': 'Whisky Music',
+        },
+        body: JSON.stringify({
+          model: openRouterModel,
+          temperature: 0.55,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: JSON.stringify(userPayload) },
+          ],
+        }),
+      });
+
+      if (response.ok) {
+        const payload = await response.json();
+        const content = payload?.choices?.[0]?.message?.content ?? '';
+        parsed = extractJsonObject(content);
+      } else {
+        const errorBody = await response.text().catch(() => '');
+        console.warn(
+          '[ai-curator/chat] OpenRouter response not ok:',
+          response.status,
+          'model=', openRouterModel,
+          'keyHasValue=', Boolean(openRouterApiKey),
+          'body=', errorBody.slice(0, 400),
+        );
+      }
+    } catch (err) {
+      console.error('[ai-curator/chat] OpenRouter error:', err);
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+      return res.json({
+        intent: 'chat',
+        responseText: 'I had trouble reaching the music brain just now. Try again in a moment.',
+        facts: [],
+        playlist: null,
+        model: 'fallback',
+      });
+    }
+
+    const intent = typeof parsed.intent === 'string' ? parsed.intent : 'chat';
+    const responseText = typeof parsed.responseText === 'string' ? parsed.responseText : '';
+    const facts = Array.isArray(parsed.facts)
+      ? parsed.facts.filter((entry) => typeof entry === 'string' && entry.trim().length > 0).slice(0, 6)
+      : [];
+
+    let playlist = null;
+    if (parsed.playlist && typeof parsed.playlist === 'object' && Array.isArray(parsed.playlist.tracks)) {
+      const rawTracks = parsed.playlist.tracks
+        .filter((t) => t && typeof t === 'object' && typeof t.title === 'string' && typeof t.artist === 'string')
+        .slice(0, 12);
+
+      const country = (() => {
+        const langs = Array.isArray(preferredLanguages) ? preferredLanguages : [];
+        if (langs.includes('Hindi') || langs.includes('Punjabi') || langs.includes('Tamil') || langs.includes('Telugu')) return 'in';
+        if (langs.includes('Korean')) return 'kr';
+        if (langs.includes('Japanese')) return 'jp';
+        if (langs.includes('Spanish')) return 'mx';
+        if (langs.includes('French')) return 'fr';
+        return '';
+      })();
+
+      const resolved = await Promise.all(
+        rawTracks.map(async (track) => {
+          const query = `${track.title} ${track.artist}`.trim();
+          const itunes = await fetchItunesSearchResults(query, 1, country);
+          const enriched = await attachYouTubeIdsToSongs(itunes);
+          const song = enriched.find((s) => s && s.videoId) || null;
+          if (!song) return null;
+          return {
+            ...song,
+            reason: typeof track.reason === 'string' ? track.reason : '',
+          };
+        }),
+      );
+
+      const tracks = resolved.filter(Boolean);
+      if (tracks.length > 0) {
+        playlist = {
+          name: typeof parsed.playlist.name === 'string' ? parsed.playlist.name : 'Whisky Mix',
+          description: typeof parsed.playlist.description === 'string' ? parsed.playlist.description : '',
+          tracks,
+        };
+      }
+    }
+
+    return res.json({
+      intent,
+      responseText,
+      facts,
+      playlist,
       model: openRouterModel,
     });
   } catch (err) {
@@ -1737,8 +2607,6 @@ app.listen(port, () => {
     hasSupabaseUrl: Boolean(supabaseUrl),
     hasSupabaseServiceRoleKey: Boolean(supabaseServiceRoleKey),
     hasOpenRouterApiKey: Boolean(openRouterApiKey),
-    hasGeniusAccessToken: Boolean(geniusAccessToken),
-    hasGoogleCustomSearch: googleMetadataEnabled,
     metadataProvider,
     metadataFallbackEnabled,
     hasYtMusicProviderUrl: Boolean(ytmusicProviderUrl),
@@ -1754,7 +2622,6 @@ app.listen(port, () => {
     email: { windowMs: emailRateLimitWindowMs, maxRequests: emailRateLimitMax },
     passwordReset: { windowMs: resetRateLimitWindowMs, maxRequests: resetRateLimitMax },
     aiCurator: { windowMs: aiRateLimitWindowMs, maxRequests: aiRateLimitMax },
-    genius: { windowMs: geniusRateLimitWindowMs, maxRequests: geniusRateLimitMax },
     metadata: { windowMs: metadataRateLimitWindowMs, maxRequests: metadataRateLimitMax },
     search: { windowMs: searchRateLimitWindowMs, maxRequests: searchRateLimitMax },
   });
