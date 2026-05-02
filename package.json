@@ -11,9 +11,10 @@
     "dev:recommender": "python recommender_service/recommender_server.py",
     "electron:dev": "concurrently -k -n vite,electron -c blue,cyan \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "electron:start": "electron .",
-    "dist": "vite build && electron-builder",
-    "dist:win": "vite build && electron-builder --win --x64",
-    "dist:mac": "vite build && electron-builder --mac --universal"
+    "build:icon": "node scripts/build-icon.cjs",
+    "dist": "node scripts/build-icon.cjs && vite build && electron-builder",
+    "dist:win": "node scripts/build-icon.cjs && vite build && electron-builder --win --x64",
+    "dist:mac": "node scripts/build-icon.cjs && vite build && electron-builder --mac --universal"
   },
   "build": {
     "appId": "com.whisky.music",
@@ -40,18 +41,27 @@
       {
         "from": ".env",
         "to": ".env"
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
       }
     ],
     "win": {
       "target": [
         {
-          "target": "nsis",
+          "target": "portable",
           "arch": [
             "x64"
           ]
         }
       ],
-      "artifactName": "Whisky-Music-${version}-Setup.${ext}"
+      "artifactName": "Whisky-Music-${version}-portable.${ext}",
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "portable": {
+      "artifactName": "Whisky-Music-${version}-portable.${ext}"
     },
     "nsis": {
       "oneClick": false,
@@ -147,7 +157,9 @@
     "concurrently": "^9.2.1",
     "electron": "^33.4.11",
     "electron-builder": "^25.1.8",
+    "pngjs": "^7.0.0",
     "tailwindcss": "4.1.12",
+    "to-ico": "^1.1.5",
     "vite": "6.3.5",
     "wait-on": "^8.0.5"
   },

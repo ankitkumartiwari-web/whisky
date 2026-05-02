@@ -13,6 +13,7 @@ import {
   Sparkles,
   Download,
   BarChart3,
+  History,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -44,7 +45,7 @@ const BUILTIN_ITEMS: MenuItem[] = [
 
 const WIDGET_ICON_BY_KEY: Record<string, LucideIcon> = {
   'now-playing': Pause,
-  recent: Music,
+  recent: History,
   'top-artists': Mic2,
   mood: Sparkles,
   liked: Heart,
