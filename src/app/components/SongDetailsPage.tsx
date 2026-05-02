@@ -433,9 +433,11 @@ export function SongDetailsPage({
           exit={{ opacity: 0, y: 24 }}
           transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
         >
-          {/* -- Top bar ----------------------------------------------- */}
+          {/* -- Top bar -----------------------------------------------
+              Right padding keeps the action buttons clear of the Windows
+              titleBarOverlay (min/max/close controls take ~138px on the right). */}
           <div
-            className="flex items-center justify-between px-8 py-4 flex-shrink-0 border-b border-slate-200/10 dark:border-white/10"
+            className="flex items-center justify-between pl-8 pr-[160px] py-4 flex-shrink-0 border-b border-slate-200/10 dark:border-white/10"
           >
             {/* Song identity */}
             <div className="flex items-center gap-4">

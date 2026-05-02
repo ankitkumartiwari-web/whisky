@@ -37,7 +37,8 @@ export function TopNavigation({
 
   return (
     <div className="fixed top-0 left-20 right-0 bg-background/60 backdrop-blur-xl border-b border-border z-40">
-      <div className="px-12 py-6 flex items-center justify-between">
+      {/* Right padding clears the Windows titleBarOverlay (~138px of min/max/close). */}
+      <div className="pl-12 pr-[160px] py-6 flex items-center justify-between">
         {/* Search Bar */}
         <div className="flex-1 max-w-2xl">
           <div className="space-y-2">
