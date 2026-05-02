@@ -106,18 +106,21 @@ export function SongCard(props: SongCardProps) {
             animate={{ opacity: isHovered ? 1 : 0 }}
             transition={{ duration: 0.3 }}
           >
-            <motion.button
-              className={`w-16 h-16 rounded-full flex items-center justify-center shadow-2xl ${
+          <motion.button
+            className={`w-16 h-16 rounded-full flex items-center justify-center shadow-2xl ${
                 isPlayable
                   ? 'bg-accent text-accent-foreground'
                   : 'bg-white/20 text-white'
               }`}
-              onClick={handlePlay}
-              initial={{ scale: 0.8, opacity: 0 }}
-              animate={{ 
-                scale: isHovered ? 1 : 0.8, 
-                opacity: isHovered ? 1 : 0 
-              }}
+            onClick={(e) => {
+              e.stopPropagation();
+              handlePlay();
+            }}
+            initial={{ scale: 0.8, opacity: 0 }}
+            animate={{ 
+              scale: isHovered ? 1 : 0.8, 
+              opacity: isHovered ? 1 : 0 
+            }}
               whileHover={{ scale: 1.1 }}
               transition={{ duration: 0.2 }}
               title={isPlayable ? 'Play song' : 'This result is not wired to a playable source yet'}

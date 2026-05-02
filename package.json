@@ -9,12 +9,13 @@
     "dev": "vite",
     "dev:api": "node server/resend-api.mjs",
     "dev:recommender": "python recommender_service/recommender_server.py",
-    "electron:dev": "concurrently -k -n vite,electron -c blue,cyan \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "electron:dev": "concurrently -k -n vite,api,electron -c blue,magenta,cyan \"vite\" \"node server/resend-api.mjs\" \"wait-on http://localhost:5173 http://localhost:8787/api/health && electron .\"",
     "electron:start": "electron .",
     "build:icon": "node scripts/build-icon.cjs",
-    "dist": "node scripts/build-icon.cjs && vite build && electron-builder",
-    "dist:win": "node scripts/build-icon.cjs && vite build && electron-builder --win --x64",
-    "dist:mac": "node scripts/build-icon.cjs && vite build && electron-builder --mac --universal"
+    "build:server": "node scripts/bundle-server.cjs",
+    "dist": "node scripts/build-icon.cjs && node scripts/bundle-server.cjs && vite build && electron-builder",
+    "dist:win": "node scripts/build-icon.cjs && node scripts/bundle-server.cjs && vite build && electron-builder --win --x64",
+    "dist:mac": "node scripts/build-icon.cjs && node scripts/bundle-server.cjs && vite build && electron-builder --mac --universal"
   },
   "build": {
     "appId": "com.whisky.music",
@@ -31,7 +32,7 @@
     ],
     "extraResources": [
       {
-        "from": "server",
+        "from": "dist-server",
         "to": "server",
         "filter": [
           "**/*.mjs",
@@ -45,6 +46,10 @@
       {
         "from": "build/icon.ico",
         "to": "icon.ico"
+      },
+      {
+        "from": "build/yt-dlp.exe",
+        "to": "yt-dlp.exe"
       }
     ],
     "win": {
@@ -56,12 +61,12 @@
           ]
         }
       ],
-      "artifactName": "Whisky-Music-${version}-portable.${ext}",
+      "artifactName": "Whisky-Music-portable.${ext}",
       "icon": "build/icon.ico",
       "signAndEditExecutable": false
     },
     "portable": {
-      "artifactName": "Whisky-Music-${version}-portable.${ext}"
+      "artifactName": "Whisky-Music-portable.${ext}"
     },
     "nsis": {
       "oneClick": false,

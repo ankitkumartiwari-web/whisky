@@ -167,6 +167,15 @@ function AppContent() {
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [progress, setProgress] = useState(0);
   const [volume, setVolume] = useState<number>(getStoredVolume);
+  // Direct audio URL extracted server-side via yt-dlp. When present, we use a plain
+  // HTML5 <audio> element instead of the YouTube IFrame embed — this bypasses every
+  // embed restriction (error 150) since we're streaming the raw audio directly.
+  const [directAudioUrl, setDirectAudioUrl] = useState<string | null>(null);
+  // Track whether we're still waiting on yt-dlp before mounting the iframe fallback —
+  // prevents the iframe from spamming error 150 in the few seconds before audio
+  // extraction returns. Only mount the iframe if yt-dlp explicitly gives up.
+  const [audioStreamResolved, setAudioStreamResolved] = useState(false);
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEYS.volume, String(volume));
@@ -220,6 +229,10 @@ function AppContent() {
   const playerRef = useRef<any>(null);
   const repeatOneUsedRef = useRef(false);
   const songEndFiredRef = useRef<string | null>(null);
+  // Track videoIds we've already tried (and that errored) for the current song so we
+  // can ask the server for alternates instead of reusing the same broken ID.
+  const triedVideoIdsRef = useRef<Map<string, Set<string>>>(new Map());
+  const altLookupInFlightRef = useRef<string | null>(null);
   // For YouTube embed API, always set origin for best compatibility
   const youtubeOrigin = typeof window !== 'undefined' ? window.location.origin : '';
   // NOTE: For maximum compatibility, ReactPlayer is always mounted, never display:none, and playback is user-triggered on mobile due to browser autoplay policies.
@@ -322,30 +335,27 @@ function AppContent() {
     return queue;
   }, [currentSong, candidatePool]);
 
-  const handlePlaySong = (song: Song) => {
-    if (!song.videoId || song.videoId.length !== 11) {
-      setPlaybackNotice(
-        `"${song.title}" does not include a valid YouTube videoId yet, so playback is unavailable for this search result.`,
-      );
+  const handlePlaySong = async (song: Song) => {
+    const playableSong = await resolvePlayableSong(song);
+    if (!playableSong) {
       setIsPlaying(false);
-      console.warn('Blocked playback for song without valid videoId:', song);
       return;
     }
     setPlaybackNotice('');
-    setCurrentSong(song);
+    setCurrentSong(playableSong);
     setIsPlaying(true);
     setProgress(0);
     setCurrentTime(0);
-    const index = candidatePool.findIndex((s) => s.id === song.id);
+    const index = candidatePool.findIndex((s) => s.id === playableSong.id);
     setCurrentSongIndex(index !== -1 ? index : -1);
     repeatOneUsedRef.current = false;
-    setRecentlyPlayedSongs((prev) => pushRecentSong(prev, song));
+    setRecentlyPlayedSongs((prev) => pushRecentSong(prev, playableSong));
     void logRecommendationEvent({
       eventType: 'play',
-      songId: song.id,
+      songId: playableSong.id,
       likedSongIds: [...likedSongIds],
-      recentlyPlayedIds: [song.id, ...recentlyPlayedIds.filter((id) => id !== song.id)].slice(0, 6),
-      currentSongId: song.id,
+      recentlyPlayedIds: [playableSong.id, ...recentlyPlayedIds.filter((id) => id !== playableSong.id)].slice(0, 6),
+      currentSongId: playableSong.id,
     });
   };
 
@@ -377,15 +387,21 @@ function AppContent() {
 
     if (!nextSong) return;
 
-    const nextIndex = candidatePool.findIndex((song) => song.id === nextSong!.id);
+    const playableSong = await resolvePlayableSong(nextSong);
+    if (!playableSong) {
+      setIsPlaying(false);
+      return;
+    }
+
+    const nextIndex = candidatePool.findIndex((song) => song.id === playableSong.id);
     setCurrentSongIndex(nextIndex !== -1 ? nextIndex : -1);
-    setCurrentSong(nextSong);
+    setCurrentSong(playableSong);
     setIsPlaying(true);
     setProgress(0);
     setCurrentTime(0);
     setPlaybackNotice('');
     repeatOneUsedRef.current = false;
-    setRecentlyPlayedSongs((prev) => pushRecentSong(prev, nextSong!));
+    setRecentlyPlayedSongs((prev) => pushRecentSong(prev, playableSong));
   };
 
   // For ReactPlayer onEnd
@@ -469,27 +485,42 @@ function AppContent() {
   const handlePrevious = () => {
     if (recentlyPlayedSongs.length > 1) {
       const previousSong = recentlyPlayedSongs[1];
-      const idx = candidatePool.findIndex((song) => song.id === previousSong.id);
-      setCurrentSongIndex(idx);
-      setCurrentSong(previousSong);
-      setIsPlaying(true);
-      setProgress(0);
-      setCurrentTime(0);
-      setPlaybackNotice('');
-      repeatOneUsedRef.current = false;
-      setRecentlyPlayedSongs((prev) => pushRecentSong(prev, previousSong));
+      void (async () => {
+        const playableSong = await resolvePlayableSong(previousSong);
+        if (!playableSong) {
+          setIsPlaying(false);
+          return;
+        }
+        const idx = candidatePool.findIndex((song) => song.id === playableSong.id);
+        setCurrentSongIndex(idx);
+        setCurrentSong(playableSong);
+        setIsPlaying(true);
+        setProgress(0);
+        setCurrentTime(0);
+        setPlaybackNotice('');
+        repeatOneUsedRef.current = false;
+        setRecentlyPlayedSongs((prev) => pushRecentSong(prev, playableSong));
+      })();
       return;
     }
     const pool = candidatePool;
     if (pool.length === 0) return;
     const prevIndex = currentSongIndex <= 0 ? pool.length - 1 : currentSongIndex - 1;
-    setCurrentSongIndex(prevIndex);
-    setCurrentSong(pool[prevIndex]);
-    setIsPlaying(true);
-    setProgress(0);
-    setCurrentTime(0);
-    setPlaybackNotice('');
-    repeatOneUsedRef.current = false;
+    void (async () => {
+      const playableSong = await resolvePlayableSong(pool[prevIndex]);
+      if (!playableSong) {
+        setIsPlaying(false);
+        return;
+      }
+      const idx = candidatePool.findIndex((song) => song.id === playableSong.id);
+      setCurrentSongIndex(idx);
+      setCurrentSong(playableSong);
+      setIsPlaying(true);
+      setProgress(0);
+      setCurrentTime(0);
+      setPlaybackNotice('');
+      repeatOneUsedRef.current = false;
+    })();
   };
 
   const handleLikeSong = (songId: string) => {
@@ -653,6 +684,15 @@ function AppContent() {
   };
 
   const handleOnboardingSkip = () => {
+    const defaults: OnboardingPreferences = {
+      languages: ['English'],
+      genres: ['Pop', 'Hip-Hop', 'Indie'],
+      moods: ['Happy', 'Chill'],
+      energy: 'medium',
+      completedAt: new Date().toISOString(),
+    };
+    window.localStorage.setItem(STORAGE_KEYS.onboardingPrefs, JSON.stringify(defaults));
+    setOnboardingPrefs(defaults);
     setIsOnboardingOpen(false);
   };
 
@@ -663,6 +703,20 @@ function AppContent() {
     setActiveMenuItem(item);
   };
 
+  const resolvePlayableSong = async (song: Song): Promise<Song | null> => {
+    // The pre-flight embed check is no longer needed: yt-dlp extracts a direct audio
+    // URL for any videoId regardless of whether YouTube embed is allowed. We just
+    // verify the videoId looks well-formed and let the audio-stream effect handle
+    // the actual playback resolution.
+    if (!song.videoId || !isValidYouTubeVideoId(song.videoId)) {
+      setPlaybackNotice(
+        `"${song.title}" does not include a valid YouTube videoId yet, so playback is unavailable for this track.`,
+      );
+      return null;
+    }
+    return song;
+  };
+
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEYS.likedSongIds, JSON.stringify([...likedSongIds]));
   }, [likedSongIds]);
@@ -670,6 +724,51 @@ function AppContent() {
   useEffect(() => {
     window.localStorage.setItem('whisky-recent-songs', JSON.stringify(recentlyPlayedSongs));
   }, [recentlyPlayedSongs]);
+
+  // When the current song or its videoId changes, ask the server to extract a direct
+  // audio URL via yt-dlp. If we get one, the renderer plays via plain <audio> (no
+  // YouTube embed restrictions). If extraction fails, we fall back to the iframe.
+  useEffect(() => {
+    if (!currentSong?.videoId) {
+      setDirectAudioUrl(null);
+      setAudioStreamResolved(false);
+      return;
+    }
+    let cancelled = false;
+    setDirectAudioUrl(null);
+    setAudioStreamResolved(false);
+    const targetVid = currentSong.videoId;
+    fetch(`/api/audio-stream?videoId=${encodeURIComponent(targetVid)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { url?: string } | null) => {
+        if (cancelled) return;
+        if (data?.url) setDirectAudioUrl(data.url);
+        // Mark resolved either way — if no URL came back, the iframe fallback
+        // is now allowed to mount and try its own thing.
+        setAudioStreamResolved(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAudioStreamResolved(true);
+      });
+    return () => { cancelled = true; };
+  }, [currentSong?.videoId]);
+
+  // Drive the audio element's play/pause + volume from React state.
+  useEffect(() => {
+    const el = audioElRef.current;
+    if (!el || !directAudioUrl) return;
+    if (isPlaying) {
+      el.play().catch(() => {/* autoplay may be blocked momentarily */});
+    } else {
+      el.pause();
+    }
+  }, [isPlaying, directAudioUrl]);
+
+  useEffect(() => {
+    const el = audioElRef.current;
+    if (el) el.volume = Math.max(0, Math.min(1, volume / 100));
+  }, [volume, directAudioUrl]);
 
   useEffect(() => {
     if (!onboardingPrefs) {
@@ -680,10 +779,16 @@ function AppContent() {
     }
 
     let isMounted = true;
+    let retryHandle: number | null = null;
     setIsRecommendationLoading(true);
     setAiRecommendationError('');
 
-    const handle = window.setTimeout(() => {
+    // In packaged builds the embedded API spawns slightly after window load, so the first
+    // recommendation pass can race ahead of it. Retry with backoff (1s, 2s, 4s, 8s, 16s)
+    // before surfacing an error so a cold start still produces recs without user action.
+    const RETRY_DELAYS = [1000, 2000, 4000, 8000, 16000];
+
+    const runRound = (attempt: number) => {
       const directory = songDirectoryRef.current;
       const likedSongs = Array.from(likedSongIds)
         .map((id) => directory.get(id))
@@ -719,7 +824,10 @@ function AppContent() {
               collected.push(song);
             });
             const ranked = rankAndDiversify(collected, profile, 12);
-            setAiRecommendedSongs(ranked);
+            if (ranked.length > 0) {
+              setAiRecommendedSongs(ranked);
+              setAiRecommendationError('');
+            }
             if (!firstShown && ranked.length > 0) {
               firstShown = true;
               setIsRecommendationLoading(false);
@@ -730,18 +838,32 @@ function AppContent() {
 
       Promise.all(tasks).then(() => {
         if (!isMounted) return;
-        setIsRecommendationLoading(false);
-        if (collected.length === 0) {
+        if (collected.length > 0) {
+          setIsRecommendationLoading(false);
+          return;
+        }
+        const nextDelay = RETRY_DELAYS[attempt];
+        if (nextDelay !== undefined) {
+          retryHandle = window.setTimeout(() => runRound(attempt + 1), nextDelay);
+        } else {
+          setIsRecommendationLoading(false);
           setAiRecommendationError('Could not find tracks for your preferences yet.');
         }
       });
-    }, 350);
+    };
+
+    const initialHandle = window.setTimeout(() => runRound(0), 350);
 
     return () => {
       isMounted = false;
-      window.clearTimeout(handle);
+      window.clearTimeout(initialHandle);
+      if (retryHandle !== null) window.clearTimeout(retryHandle);
     };
-  }, [onboardingPrefs, currentSong?.id, likedSongIds, recentlyPlayedIds]);
+    // currentSong is intentionally omitted from deps — refetching the home grid every
+    // time the user picks a song caused the visible flicker the user reported. The
+    // current song is read at runtime via songDirectoryRef so it still feeds the soft
+    // signal without retriggering this effect.
+  }, [onboardingPrefs, likedSongIds, recentlyPlayedIds]);
 
   const handleSignIn = async (email: string, password: string) => {
     if (!supabase) return { error: supabaseConfigError ?? 'Supabase is not configured.' };
@@ -918,7 +1040,31 @@ function AppContent() {
         onRemoveWidget={handleToggleWidgetWithRedirect}
         activeWidgetIds={activeWidgetIds}
       />
-      {/* Hidden global ReactPlayer keeps playback state and progress in sync. */}
+      {/* When yt-dlp extracted a direct audio URL, prefer plain HTML5 <audio> over the
+          YouTube iframe — bypasses every embed restriction (error 150). The iframe is
+          only used as a fallback when extraction fails. */}
+      {directAudioUrl && (
+        <audio
+          ref={audioElRef}
+          src={directAudioUrl}
+          preload="auto"
+          onTimeUpdate={(e) => {
+            const dur = e.currentTarget.duration;
+            const cur = e.currentTarget.currentTime;
+            setCurrentTime(cur);
+            if (dur > 0) setProgress((cur / dur) * 100);
+          }}
+          onEnded={playNext}
+          onError={() => {
+            // Direct stream URLs can fail (signed URL expired, network glitch). Drop
+            // the URL so the iframe-based player takes over for this song.
+            setDirectAudioUrl(null);
+          }}
+          style={{ position: 'fixed', bottom: 0, right: 0, width: '1px', height: '1px', opacity: 0, pointerEvents: 'none', zIndex: -1 }}
+          aria-hidden="true"
+        />
+      )}
+      {/* Hidden global ReactPlayer fallback when no direct audio URL is available. */}
       <div
         style={
           {
@@ -931,29 +1077,98 @@ function AppContent() {
             overflow: "hidden",
             pointerEvents: "none",
             zIndex: -1,
+            display: directAudioUrl ? 'none' : 'block',
           }
         }
       >
         <ReactPlayer
           ref={playerRef}
-          src={currentSong?.videoId ? `https://www.youtube.com/watch?v=${currentSong.videoId}` : undefined}
-          playing={isPlaying}
+          src={
+            // Mount iframe ONLY when yt-dlp has explicitly given up — prevents the
+            // iframe from spamming error 150 in the seconds before audio extraction
+            // returns a usable URL.
+            !directAudioUrl && audioStreamResolved && currentSong?.videoId
+              ? `https://www.youtube-nocookie.com/watch?v=${currentSong.videoId}`
+              : undefined
+          }
+          playing={isPlaying && !directAudioUrl && audioStreamResolved}
           controls={true}
           width="320px"
           height="60px"
           volume={volume / 100}
           onEnded={playNext}
           onError={() => {
-            setPlaybackNotice('Playback failed.');
+            // YouTube error 150/101 = embed disabled. Many label-uploaded music videos
+            // block embedding, but a Topic upload or audio-only version of the same song
+            // is usually fine. Ask the server for an alternate videoId for the SAME song
+            // before giving up. After 5 failures, surface a notice and stop trying — do
+            // NOT auto-skip to a different song since the user explicitly picked this one.
+            const song = currentSong;
+            if (!song) return;
+            const failedKey = song.id;
+            if (altLookupInFlightRef.current === failedKey) return;
+
+            const triedSet = triedVideoIdsRef.current.get(failedKey) ?? new Set<string>();
+            if (song.videoId) triedSet.add(song.videoId);
+            triedVideoIdsRef.current.set(failedKey, triedSet);
+
+            if (triedSet.size >= 5) {
+              setPlaybackNotice(`This song isn't available for playback. Try another track.`);
+              setIsPlaying(false);
+              setCurrentSong((curr) => {
+                if (!curr || curr.id !== failedKey) return curr;
+                return { ...curr, videoId: '' };
+              });
+              return;
+            }
+
+            altLookupInFlightRef.current = failedKey;
+            const params = new URLSearchParams({
+              title: song.title,
+              artist: song.artist,
+              exclude: Array.from(triedSet).join(','),
+            });
+            fetch(`/api/resolve-alt?${params.toString()}`)
+              .then((r) => (r.ok ? r.json() : null))
+              .then((data: { videoId?: string } | null) => {
+                altLookupInFlightRef.current = null;
+                if (!data?.videoId) {
+                  setPlaybackNotice(`This song isn't available for playback. Try another track.`);
+                  setIsPlaying(false);
+                  setCurrentSong((curr) => {
+                    if (!curr || curr.id !== failedKey) return curr;
+                    return { ...curr, videoId: '' };
+                  });
+                  return;
+                }
+                // Only swap the videoId if the user hasn't already moved on to a
+                // different song while this lookup was in flight — otherwise we'd
+                // clobber their new selection with the old (failing) one.
+                setCurrentSong((curr) => {
+                  if (!curr || curr.id !== failedKey) return curr;
+                  return { ...curr, videoId: data.videoId! };
+                });
+              })
+              .catch(() => {
+                altLookupInFlightRef.current = null;
+                setPlaybackNotice(`This song isn't available for playback. Try another track.`);
+                setIsPlaying(false);
+                setCurrentSong((curr) => {
+                  if (!curr || curr.id !== failedKey) return curr;
+                  return { ...curr, videoId: '' };
+                });
+              });
           }}
           onTimeUpdate={handleReactPlayerTimeUpdate}
+          // youtube-video-element (react-player v3's underlying element) spreads config
+          // directly into the iframe URL params — nesting under `youtube` would set a
+          // useless `youtube=[object]` param. Passing flat keys ensures `origin` actually
+          // reaches the iframe so postMessage between parent and YouTube works.
           config={{
-            youtube: {
-              origin: youtubeOrigin,
-              rel: 0,
-              enablejsapi: 1,
-            },
-          }}
+            origin: youtubeOrigin,
+            rel: 0,
+            enablejsapi: 1,
+          } as never}
         />
       </div>
       {/* Playback notices removed as requested: no popups, banners, or visible playbackNotice UI */}

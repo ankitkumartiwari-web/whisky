@@ -5,13 +5,24 @@ const os = require('node:os');
 // === Crash silencing must happen FIRST so any error in subsequent setup is logged not dialog'd ===
 function safeAppendCrash(label, payload) {
   try {
-    const dir = path.join(os.homedir(), 'AppData', 'Roaming', 'Whisky Music');
-    fs.mkdirSync(dir, { recursive: true });
-    fs.appendFileSync(path.join(dir, 'main-crash.log'), `${new Date().toISOString()} ${label} ${payload}\n`);
+    // Write to BOTH the legacy "Whisky Music" path and Electron's actual userData
+    // (whisky-music-app, taken from npm name). Whichever exists first wins; logging
+    // to both means we always have a trail no matter which folder Electron creates.
+    const dirs = [
+      path.join(os.homedir(), 'AppData', 'Roaming', 'Whisky Music'),
+      path.join(os.homedir(), 'AppData', 'Roaming', 'whisky-music-app'),
+    ];
+    for (const dir of dirs) {
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.appendFileSync(path.join(dir, 'main-crash.log'), `${new Date().toISOString()} ${label} ${payload}\n`);
+      } catch { /* try next */ }
+    }
   } catch {
     // last resort: silent
   }
 }
+
 process.on('uncaughtException', (err) => {
   safeAppendCrash('uncaughtException', err && (err.stack || err.message) || String(err));
 });
@@ -84,18 +95,53 @@ function resolveEnvPath() {
   return null;
 }
 
-function startApiServer() {
+async function isApiAlreadyUp() {
+  try {
+    const res = await fetch(`http://127.0.0.1:${API_PORT}/api/health`);
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function startApiServer() {
   if (apiProcess) return;
+  // Don't spawn a duplicate if dev mode already has the API running on this port.
+  if (await isApiAlreadyUp()) {
+    safeAppendCrash('startApiServer', `API already up on ${API_PORT}, skipping spawn`);
+    return;
+  }
   const entry = resolveServerEntry();
   if (!fs.existsSync(entry)) {
-    console.warn('[whisky] API entry not found at', entry);
+    safeAppendCrash('startApiServer', `API entry not found at ${entry}`);
     return;
   }
 
   const envPath = resolveEnvPath();
   const cwd = envPath ? path.dirname(envPath) : path.join(__dirname, '..');
-  const childEnv = { ...process.env, RESEND_API_PORT: String(API_PORT) };
+  const childEnv = {
+    ...process.env,
+    RESEND_API_PORT: String(API_PORT),
+    // Critical for packaged builds: process.execPath is the Electron binary; this flag tells it to
+    // run our script as Node (no GUI, no Chromium). Without this, the API "spawns" but is actually
+    // an empty Electron renderer that never starts Express.
+    ELECTRON_RUN_AS_NODE: '1',
+  };
   if (envPath) childEnv.DOTENV_CONFIG_PATH = envPath;
+  if (!isDev) {
+    // Have the API also serve the bundled UI so the renderer loads from http://localhost
+    // (a real http origin) instead of file://. Required for the YouTube IFrame API to
+    // accept play/pause/seek postMessage commands.
+    childEnv.WHISKY_STATIC_DIR = path.join(__dirname, '..', 'dist');
+    // Point the API at the bundled yt-dlp.exe so it can extract direct audio URLs
+    // for songs whose YouTube embed is blocked (the common label-restricted case).
+    const ytdlp = path.join(process.resourcesPath, 'yt-dlp.exe');
+    if (fs.existsSync(ytdlp)) childEnv.YTDLP_PATH = ytdlp;
+  } else {
+    // In dev, look for yt-dlp in the project's build dir.
+    const devYtdlp = path.join(__dirname, '..', 'build', 'yt-dlp.exe');
+    if (fs.existsSync(devYtdlp)) childEnv.YTDLP_PATH = devYtdlp;
+  }
 
   // In packaged builds, process.stdout/stderr are not real pipes — writing to them throws EPIPE.
   // Open a log file we can safely append to instead.
@@ -199,12 +245,31 @@ async function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
       // Allow YouTube IFrame embed
       webSecurity: true,
+      // Chromium blocks audio/video autoplay by default; without this the YouTube iframe
+      // posts a "play" message but the embed silently refuses to start audio until the
+      // user clicks inside the iframe itself. Disabling the gesture requirement makes
+      // our custom play button actually start audio.
+      autoplayPolicy: 'no-user-gesture-required',
     },
   });
 
   mainWindow.once('ready-to-show', () => {
     if (mainWindow) mainWindow.show();
   });
+
+  // Mirror renderer console + uncaught errors into a file we can inspect without DevTools.
+  try {
+    const rendererLogPath = path.join(app.getPath('userData'), 'renderer.log');
+    const rendererStream = fs.createWriteStream(rendererLogPath, { flags: 'a' });
+    rendererStream.write(`\n=== launch ${new Date().toISOString()} ===\n`);
+    mainWindow.webContents.on('console-message', (_e, level, message, line, source) => {
+      const tag = ['v', 'i', 'W', 'E'][level] || '?';
+      rendererStream.write(`[${tag}] ${source}:${line} ${message}\n`);
+    });
+    mainWindow.webContents.on('render-process-gone', (_e, details) => {
+      rendererStream.write(`[render-process-gone] ${JSON.stringify(details)}\n`);
+    });
+  } catch { /* ignore */ }
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -217,10 +282,24 @@ async function createWindow() {
     await mainWindow.loadURL(DEV_URL);
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
-    // In packaged builds, load the bundled UI immediately — the login screen is fully static
-    // and doesn't depend on the embedded API. The API will be ready by the time the user signs in.
-    const indexPath = path.join(__dirname, '..', 'dist', 'index.html');
-    await mainWindow.loadFile(indexPath);
+    // Show the splash IMMEDIATELY so the window doesn't sit blank while we wait for
+    // the embedded API to come up. Once the API is ready, swap to the http://localhost
+    // URL (required so window.location.origin is http for the YouTube IFrame embed).
+    await mainWindow.loadFile(path.join(__dirname, 'splash.html'));
+    waitForApi(10000).then(async (apiReady) => {
+      if (!mainWindow) return;
+      try {
+        if (apiReady) {
+          await mainWindow.loadURL(`http://127.0.0.1:${API_PORT}/`);
+        } else {
+          // Fallback: API never came up — load file:// so the user sees the UI even
+          // though YouTube embed will be broken. Better than a stuck splash.
+          await mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+        }
+      } catch (err) {
+        safeAppendCrash('postSplashLoad', err && err.message ? err.message : String(err));
+      }
+    });
   }
 
   mainWindow.on('closed', () => {
@@ -229,7 +308,19 @@ async function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  startApiServer();
+  // Grant media-related permissions to the renderer + the embedded YouTube iframe so
+  // playback isn't silently blocked by Chromium's permission prompt (which never fires
+  // a UI in our setup).
+  const { session: defaultSession } = require('electron');
+  const ses = defaultSession.defaultSession;
+  ses.setPermissionRequestHandler((_webContents, permission, callback) => {
+    if (['media', 'mediaKeySystem', 'audioCapture', 'background-sync'].includes(permission)) {
+      return callback(true);
+    }
+    callback(false);
+  });
+
+  await startApiServer();
   await createWindow();
 
   if (process.platform === 'darwin') {

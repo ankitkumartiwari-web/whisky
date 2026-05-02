@@ -1,6 +1,9 @@
 
 import dotenv from 'dotenv';
-dotenv.config({ override: true });
+// In packaged builds main.cjs sets DOTENV_CONFIG_PATH to the .env shipped via extraResources;
+// in dev it falls back to dotenv's default cwd lookup.
+const envPath = process.env.DOTENV_CONFIG_PATH;
+dotenv.config({ override: true, path: envPath || undefined });
 import YTMusic from 'ytmusic-api';
 const ytmusic = new YTMusic();
 import { appendFile, mkdir } from 'node:fs/promises';
@@ -61,8 +64,78 @@ async function searchYouTubeHtmlForSong(title, artist) {
   }
 }
 
+// Reuse a single ytmusic init promise — calling .initialize() repeatedly is wasteful.
+let ytmusicReadyPromise = null;
+async function ensureYtMusicReady() {
+  if (!ytmusicReadyPromise) {
+    ytmusicReadyPromise = ytmusic.initialize().catch((err) => {
+      ytmusicReadyPromise = null;
+      throw err;
+    });
+  }
+  return ytmusicReadyPromise;
+}
+
+// Cache embeddability checks so we don't re-fetch the embed page for every search.
+const embeddableCache = new Map();
+async function isVideoEmbeddable(videoId) {
+  if (!videoId) return false;
+  const cached = embeddableCache.get(videoId);
+  if (cached !== undefined) return cached;
+  try {
+    const res = await fetch(`https://www.youtube.com/embed/${videoId}`, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+    });
+    if (!res.ok) {
+      embeddableCache.set(videoId, false);
+      return false;
+    }
+    const body = await res.text();
+    // YouTube's embed page sets playabilityStatus.status to "OK" for embeddable videos
+    // and "UNPLAYABLE" / "ERROR" for non-embeddable. We also catch the common reason
+    // strings that show up for embed-disabled videos.
+    const okMatch = /"playabilityStatus"\s*:\s*\{\s*"status"\s*:\s*"OK"/.test(body);
+    const blocked =
+      /requested video does not allow it to be played in embedded players/i.test(body) ||
+      /Video unavailable/.test(body);
+    const ok = okMatch && !blocked;
+    embeddableCache.set(videoId, ok);
+    return ok;
+  } catch (err) {
+    // On a network error, optimistically allow it — better to try than to drop.
+    return true;
+  }
+}
+
+async function searchYTMusicForSong(title, artist) {
+  try {
+    await ensureYtMusicReady();
+    const query = `${title} ${artist}`.trim();
+    const results = await ytmusic.searchSongs(query);
+    if (!Array.isArray(results)) return null;
+    // Walk the top results and return the first one that's actually embeddable —
+    // YT Music can surface videos whose owners have disabled embedding (especially
+    // major-label tracks), and those return error 150 in the IFrame player.
+    for (const candidate of results.slice(0, 5)) {
+      if (!candidate?.videoId) continue;
+      if (await isVideoEmbeddable(candidate.videoId)) {
+        console.log('[YTMusic] Hit (embeddable)', `${title} - ${artist}`, '->', candidate.videoId);
+        return candidate.videoId;
+      }
+      console.log('[YTMusic] Skip (not embeddable)', candidate.videoId);
+    }
+  } catch (err) {
+    console.warn('[YTMusic] search failed:', err && err.message ? err.message : err);
+  }
+  return null;
+}
+
 async function searchYouTubeForSong(title, artist) {
-  const key = `${title.toLowerCase().trim()}|${artist.toLowerCase().trim()}`;
+  // Cache key prefixed v4 because v3 didn't validate embeddability — every cached
+  // entry might be a non-embeddable videoId.
+  const key = `v4|${title.toLowerCase().trim()}|${artist.toLowerCase().trim()}`;
   const now = Date.now();
   // 1 hour cache expiry
   const cached = youtubeCache.get(key);
@@ -78,8 +151,11 @@ async function searchYouTubeForSong(title, artist) {
     const query = encodeURIComponent(`${title} ${artist} official song`);
     try {
       console.log('[YouTubeSearch] Searching:', `${title} - ${artist}`);
+      // videoEmbeddable=true filters out videos whose owners disabled IFrame embedding —
+      // without this, YouTube returns matches that 401/150 in our embedded player and
+      // playback silently fails.
       const res = await fetch(
-        `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${query}&type=video&maxResults=1&key=${YOUTUBE_API_KEY}`
+        `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${query}&type=video&videoEmbeddable=true&maxResults=1&key=${YOUTUBE_API_KEY}`
       );
       const data = await res.json();
       videoId = data?.items?.[0]?.id?.videoId || null;
@@ -92,6 +168,12 @@ async function searchYouTubeForSong(title, artist) {
     } catch (err) {
       console.error('[YouTubeSearch] Error:', err);
     }
+  }
+
+  if (!videoId) {
+    // YT Music returns embeddable Topic-channel uploads — try this BEFORE the HTML
+    // scraper, which often returns non-embeddable user-uploaded music videos.
+    videoId = await searchYTMusicForSong(title, artist);
   }
 
   if (!videoId) {
@@ -2218,16 +2300,93 @@ app.post('/api/recommendation-history', generalApiLimiter, async (req, res) => {
   }
 });
 
-async function getYouTubeAudioUrl(videoId) {
+// Resolve an alternate videoId for a given song when the originally returned one
+// is blocked by embed restrictions. We re-query YT Music and skip any IDs the
+// client has already tried; the client will keep asking until we run out.
+app.get('/api/resolve-alt', async (req, res) => {
+  const title = typeof req.query.title === 'string' ? req.query.title.trim() : '';
+  const artist = typeof req.query.artist === 'string' ? req.query.artist.trim() : '';
+  const excludeRaw = typeof req.query.exclude === 'string' ? req.query.exclude : '';
+  const exclude = new Set(excludeRaw.split(',').map((s) => s.trim()).filter(Boolean));
+  if (!title) return res.status(400).json({ error: 'title is required' });
   try {
-    await ytmusic.initialize();
-    const song = await ytmusic.getSong(videoId);
-    const url = song?.formats?.[0]?.url || song?.adaptiveFormats?.[0]?.url || null;
-    return url;
-  } catch (error) {
-    console.error('[API] Audio URL fetch failed:', error);
-    return null;
+    await ensureYtMusicReady();
+    const query = `${title} ${artist}`.trim();
+    // Pull more results than usual so we have something to try after a few failures.
+    const results = await ytmusic.searchSongs(query);
+    if (Array.isArray(results)) {
+      for (const candidate of results.slice(0, 15)) {
+        if (!candidate?.videoId) continue;
+        if (exclude.has(candidate.videoId)) continue;
+        if (!(await isVideoEmbeddable(candidate.videoId))) continue;
+        return res.json({ videoId: candidate.videoId, source: 'ytmusic' });
+      }
+    }
+    // Last-resort: HTML scraper, even though it sometimes returns non-embeddable
+    // music videos. Better than nothing.
+    const htmlVid = await searchYouTubeHtmlForSong(title, artist);
+    if (htmlVid && !exclude.has(htmlVid) && (await isVideoEmbeddable(htmlVid))) {
+      return res.json({ videoId: htmlVid, source: 'html' });
+    }
+    // Always 200 — the client distinguishes "endpoint missing" from "no result" by
+    // checking whether videoId is null. 404 here gets misread as a route bug.
+    return res.json({ videoId: null, source: 'none' });
+  } catch (err) {
+    return res.status(500).json({ error: err && err.message ? err.message : 'lookup failed' });
   }
+});
+
+// Cache extracted audio URLs — googlevideo URLs expire after a few hours, so cap TTL
+// well below that. Avoids re-running yt-dlp for the same videoId on every play.
+const audioUrlCache = new Map();
+const AUDIO_URL_TTL_MS = 90 * 60 * 1000; // 90 min, googlevideo signs expire ~6h
+
+function resolveYtDlpPath() {
+  const candidates = [
+    process.env.YTDLP_PATH,
+    path.join(process.resourcesPath || '', 'yt-dlp.exe'),
+    path.join(process.cwd(), 'build', 'yt-dlp.exe'),
+    path.join(process.cwd(), 'yt-dlp.exe'),
+  ].filter(Boolean);
+  for (const p of candidates) {
+    try { if (p && require('node:fs').existsSync(p)) return p; } catch { /* skip */ }
+  }
+  return 'yt-dlp'; // assume on PATH
+}
+
+async function extractAudioUrlViaYtDlp(videoId) {
+  const cached = audioUrlCache.get(videoId);
+  if (cached && cached.expiresAt > Date.now()) return cached.url;
+
+  const ytdlpPath = resolveYtDlpPath();
+  return new Promise((resolve) => {
+    const { spawn } = require('node:child_process');
+    const args = [
+      '-f', 'bestaudio[ext=m4a]/bestaudio',
+      '--get-url',
+      '--no-warnings',
+      '--no-playlist',
+      `https://www.youtube.com/watch?v=${videoId}`,
+    ];
+    const proc = spawn(ytdlpPath, args, { windowsHide: true });
+    let stdout = '';
+    let stderr = '';
+    proc.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    proc.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    const timer = setTimeout(() => { try { proc.kill(); } catch { /* ignore */ } }, 12000);
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0 || !stdout.trim()) {
+        console.warn('[yt-dlp] failed', videoId, 'code', code, 'stderr', stderr.slice(0, 200));
+        return resolve(null);
+      }
+      const url = stdout.trim().split('\n')[0];
+      audioUrlCache.set(videoId, { url, expiresAt: Date.now() + AUDIO_URL_TTL_MS });
+      console.log('[yt-dlp] hit', videoId);
+      resolve(url);
+    });
+    proc.on('error', () => { clearTimeout(timer); resolve(null); });
+  });
 }
 
 app.get('/api/audio-stream', async (req, res) => {
@@ -2237,7 +2396,7 @@ app.get('/api/audio-stream', async (req, res) => {
       return res.status(400).json({ error: 'videoId query parameter is required.' });
     }
 
-    const url = await getYouTubeAudioUrl(videoId);
+    const url = await extractAudioUrlViaYtDlp(videoId);
     if (!url) {
       return res.status(404).json({ error: 'Audio stream URL not found.' });
     }
@@ -2598,8 +2757,25 @@ app.post('/api/ai-curator/chat', aiLimiter, async (req, res) => {
   }
 });
 
+// Serve the packaged UI from this server when WHISKY_STATIC_DIR is set so the renderer
+// loads from http://localhost (a real http origin) instead of file:// — required for the
+// YouTube IFrame postMessage handshake to accept play/pause commands.
+const staticDir = process.env.WHISKY_STATIC_DIR;
+if (staticDir) {
+  const expressMod = await import('express');
+  const expressLib = expressMod.default || expressMod;
+  app.use(expressLib.static(staticDir, { fallthrough: true, index: 'index.html' }));
+  app.get(/^(?!\/api\/).*/, (req, res, next) => {
+    if (req.method !== 'GET') return next();
+    res.sendFile(path.join(staticDir, 'index.html'), (err) => {
+      if (err) next(err);
+    });
+  });
+}
+
 app.listen(port, () => {
   console.log(`[resend-api] Listening on http://localhost:${port}`);
+  if (staticDir) console.log(`[resend-api] Serving UI from ${staticDir}`);
   console.log('[resend-api] Config summary:', {
     appUrl,
     resendFromEmail,

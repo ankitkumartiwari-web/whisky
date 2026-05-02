@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>YT Embed with origin param</title></head>
+<body style="background:#111;color:#eee;font-family:system-ui;padding:20px">
+<h2>YouTube Embed Tests — with origin parameter</h2>
+<p>If these play, the YT IFrame works fine with these videoIds + origin params. The issue is then somewhere in our react-player wrapper.</p>
+
+<h3>Pehli Nazar Mein (swcCuuQKGJ4) with origin=http://127.0.0.1:8787</h3>
+<iframe width="500" height="281" frameborder="0"
+  src="https://www.youtube.com/embed/swcCuuQKGJ4?enablejsapi=1&origin=http%3A%2F%2F127.0.0.1%3A8787&controls=1&rel=0">
+</iframe>
+
+<h3>Cruel Summer (aC9HkZW2hZk) with origin=http://127.0.0.1:8787</h3>
+<iframe width="500" height="281" frameborder="0"
+  src="https://www.youtube.com/embed/aC9HkZW2hZk?enablejsapi=1&origin=http%3A%2F%2F127.0.0.1%3A8787&controls=1&rel=0">
+</iframe>
+
+<h3>Without origin (current broken state)</h3>
+<iframe width="500" height="281" frameborder="0"
+  src="https://www.youtube.com/embed/swcCuuQKGJ4?enablejsapi=1&controls=1&rel=0">
+</iframe>
+</body></html>

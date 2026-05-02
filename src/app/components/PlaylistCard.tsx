@@ -38,7 +38,10 @@ export function PlaylistCard({ playlist, onPlay }: PlaylistCardProps) {
         >
           <motion.button
             className="w-16 h-16 rounded-full bg-accent text-accent-foreground flex items-center justify-center shadow-2xl"
-            onClick={handlePlay}
+            onClick={(e) => {
+              e.stopPropagation();
+              handlePlay();
+            }}
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ 
               scale: isHovered ? 1 : 0.8, 
