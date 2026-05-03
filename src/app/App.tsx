@@ -475,6 +475,15 @@ function AppContent() {
 
     const nextTime = (newProgress / 100) * currentSong.duration;
     setCurrentTime(nextTime);
+
+    // Seek the active player. When yt-dlp gave us a direct audio URL the HTML5
+    // <audio> element is what's playing, so prefer that. Otherwise fall through
+    // to the YouTube iframe via ReactPlayer.
+    const audioEl = audioElRef.current;
+    if (directAudioUrl && audioEl && Number.isFinite(audioEl.duration)) {
+      audioEl.currentTime = nextTime;
+      return;
+    }
     if (playerRef.current?.seekTo) {
       playerRef.current.seekTo(nextTime, 'seconds');
     } else if (playerRef.current && typeof playerRef.current.currentTime === 'number') {
