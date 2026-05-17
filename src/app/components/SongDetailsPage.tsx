@@ -32,6 +32,7 @@ interface SongDetailsPageProps {
   isPlaying: boolean;
   progress: number;
   onPlayPause?: () => void;
+  onToggleLike?: (songId: string) => void;
   playerRef?: { current: any };
 }
 
@@ -52,6 +53,7 @@ export function SongDetailsPage({
   isPlaying,
   progress,
   onPlayPause,
+  onToggleLike,
   playerRef,
 }: SongDetailsPageProps) {
   const [isLiked, setIsLiked] = useState(false);
@@ -456,7 +458,10 @@ export function SongDetailsPage({
             {/* Actions */}
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setIsLiked(!isLiked)}
+                onClick={() => {
+                  setIsLiked(!isLiked);
+                  onToggleLike?.(song.id);
+                }}
                 className="w-9 h-9 rounded-full flex items-center justify-center transition-colors bg-slate-100 text-slate-600 dark:bg-white/5 dark:text-white/50"
                 style={{
                   background: isLiked ? `${accent}22` : undefined,

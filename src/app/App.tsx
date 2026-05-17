@@ -1368,6 +1368,27 @@ function AppContent() {
                 currentSongId={currentSong?.id ?? null}
                 currentSongTitle={currentSong?.title ?? null}
                 currentSongArtist={currentSong?.artist ?? null}
+                currentSongVideoId={currentSong?.videoId ?? null}
+                currentSongCoverUrl={currentSong?.coverUrl ?? null}
+                currentSongAlbum={currentSong?.album ?? null}
+                onRemoteSong={(remote) => {
+                  // Synthesize a Song from the broadcast payload so playback can
+                  // start without needing to re-search for the track locally.
+                  const synthetic: Song = {
+                    id: remote.songId || `remote-${remote.videoId}`,
+                    title: remote.title,
+                    artist: remote.artist,
+                    album: remote.album || '',
+                    coverUrl: remote.coverUrl || '',
+                    duration: 0,
+                    isLiked: likedSongIds.has(remote.songId),
+                    videoId: remote.videoId,
+                    genre: '',
+                    releaseYear: undefined,
+                    country: '',
+                  };
+                  void handlePlaySong(synthetic);
+                }}
               />
             </motion.section>
           )}
@@ -1462,6 +1483,14 @@ function AppContent() {
         isPlaying={isPlaying}
         progress={progress}
         onPlayPause={handlePlayPause}
+        onToggleLike={(songId) => {
+          setLikedSongIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(songId)) next.delete(songId);
+            else next.add(songId);
+            return next;
+          });
+        }}
       />
 
       <OnboardingModal

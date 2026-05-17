@@ -1,13 +1,34 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Check, Copy, LogOut, Radio, Users, Wifi, WifiOff } from 'lucide-react';
+import { Check, Copy, LogOut, Play, Radio, Users, Wifi, WifiOff } from 'lucide-react';
 import { supabase } from '../lib/supabaseClient';
+
+export interface RemoteBroadcastSong {
+  songId: string;
+  title: string;
+  artist: string;
+  videoId: string;
+  coverUrl?: string;
+  album?: string;
+  fromDisplayName?: string;
+  fromUserId?: string;
+  at: number;
+}
 
 interface MultiUserSessionProps {
   currentSongId: string | null;
   currentSongTitle?: string | null;
   currentSongArtist?: string | null;
+  currentSongVideoId?: string | null;
+  currentSongCoverUrl?: string | null;
+  currentSongAlbum?: string | null;
   onSyncToggle?: (sync: boolean) => void;
+  /**
+   * Fires when another listener in the room broadcasts the song they're playing.
+   * App.tsx plays it locally if the user has follow-along enabled, or we just
+   * show the remote track in the UI so the user can opt-in by clicking it.
+   */
+  onRemoteSong?: (song: RemoteBroadcastSong) => void;
 }
 
 interface SessionUser {
@@ -55,7 +76,11 @@ export function MultiUserSession({
   currentSongId,
   currentSongTitle,
   currentSongArtist,
+  currentSongVideoId,
+  currentSongCoverUrl,
+  currentSongAlbum,
   onSyncToggle,
+  onRemoteSong,
 }: MultiUserSessionProps) {
   const [roomCode, setRoomCode] = useState<string>(() =>
     typeof window !== 'undefined' ? window.localStorage.getItem(ROOM_STORAGE_KEY) ?? '' : '',
@@ -64,9 +89,15 @@ export function MultiUserSession({
   const [pendingCode, setPendingCode] = useState('');
   const [users, setUsers] = useState<SessionUser[]>([]);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [followAlong, setFollowAlong] = useState(false);
+  const [remoteSong, setRemoteSong] = useState<RemoteBroadcastSong | null>(null);
   const [copied, setCopied] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'live' | 'error'>('idle');
+  const followAlongRef = useRef(false);
+  const onRemoteSongRef = useRef(onRemoteSong);
+  useEffect(() => { followAlongRef.current = followAlong; }, [followAlong]);
+  useEffect(() => { onRemoteSongRef.current = onRemoteSong; }, [onRemoteSong]);
 
   const channelRef = useRef<any>(null);
   const userIdRef = useRef<string>('');
@@ -124,6 +155,18 @@ export function MultiUserSession({
         }
       });
 
+      // Receive now-playing broadcasts from other listeners. Without this listener
+      // the channel.send() calls below would fire into the void — no one received
+      // anything. Show the remote song on the UI and, if follow-along is on, hand
+      // it to App.tsx so it actually plays locally.
+      channel.on('broadcast', { event: 'now-playing' }, ({ payload }: { payload: RemoteBroadcastSong }) => {
+        if (!payload || payload.fromUserId === userIdRef.current) return;
+        setRemoteSong(payload);
+        if (followAlongRef.current) {
+          onRemoteSongRef.current?.(payload);
+        }
+      });
+
       channel.subscribe(async (status: string) => {
         if (isCancelled) return;
         if (status === 'SUBSCRIBED') {
@@ -158,6 +201,7 @@ export function MultiUserSession({
 
   useEffect(() => {
     if (!channelRef.current || !currentSongId || !isSyncing) return;
+    if (!currentSongVideoId) return; // Without videoId, listeners can't actually play it.
     channelRef.current.send({
       type: 'broadcast',
       event: 'now-playing',
@@ -165,11 +209,15 @@ export function MultiUserSession({
         songId: currentSongId,
         title: currentSongTitle ?? '',
         artist: currentSongArtist ?? '',
-        from: userIdRef.current,
+        videoId: currentSongVideoId,
+        coverUrl: currentSongCoverUrl ?? '',
+        album: currentSongAlbum ?? '',
+        fromUserId: userIdRef.current,
+        fromDisplayName: displayNameRef.current,
         at: Date.now(),
       },
     });
-  }, [currentSongId, currentSongTitle, currentSongArtist, isSyncing]);
+  }, [currentSongId, currentSongTitle, currentSongArtist, currentSongVideoId, currentSongCoverUrl, currentSongAlbum, isSyncing]);
 
   const handleCreateRoom = () => {
     const code = generateRoomCode();
@@ -376,21 +424,63 @@ export function MultiUserSession({
             )}
           </div>
 
-          <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-background/40 p-6 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={isSyncing}
-              onChange={(event) => handleSyncToggle(event.target.checked)}
-              className="mt-1 h-4 w-4 accent-accent"
-            />
-            <div>
-              <p className="text-sm">Broadcast my track</p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Other listeners in the room will see the song you're playing in real time.
-              </p>
-            </div>
-          </label>
+          <div className="space-y-3">
+            <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-background/40 p-5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isSyncing}
+                onChange={(event) => handleSyncToggle(event.target.checked)}
+                className="mt-1 h-4 w-4 accent-accent"
+              />
+              <div>
+                <p className="text-sm">Broadcast my track</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Others see what you play in real time.
+                </p>
+              </div>
+            </label>
+            <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-background/40 p-5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={followAlong}
+                onChange={(event) => setFollowAlong(event.target.checked)}
+                className="mt-1 h-4 w-4 accent-accent"
+              />
+              <div>
+                <p className="text-sm">Listen along</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Auto-play whatever the host broadcasts.
+                </p>
+              </div>
+            </label>
+          </div>
         </div>
+
+        {remoteSong && (
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-6 flex items-center gap-4 rounded-2xl border border-accent/30 bg-accent/5 p-5"
+          >
+            {remoteSong.coverUrl && (
+              <img src={remoteSong.coverUrl} alt="" className="h-14 w-14 rounded-lg object-cover" />
+            )}
+            <div className="flex-1 min-w-0">
+              <p className="text-xs uppercase tracking-[0.2em] text-accent">
+                {remoteSong.fromDisplayName || 'A listener'} is playing
+              </p>
+              <p className="text-sm truncate">{remoteSong.title}</p>
+              <p className="text-xs text-muted-foreground truncate">{remoteSong.artist}</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => onRemoteSongRef.current?.(remoteSong)}
+              className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-foreground hover:bg-accent/90"
+            >
+              <Play className="h-3.5 w-3.5" /> Play this
+            </button>
+          </motion.div>
+        )}
       </div>
 
       <div className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl p-8">
