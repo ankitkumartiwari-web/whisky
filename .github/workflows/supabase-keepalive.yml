@@ -1,0 +1,44 @@
+name: Supabase keepalive
+
+# Supabase free tier pauses a project after 7 days of inactivity. This workflow
+# pings the project daily so it stays warm — no manual unpause required.
+
+on:
+  schedule:
+    # Daily at 03:17 UTC. Off-the-hour to avoid GitHub Actions' "everyone scheduled
+    # for :00" backlog. Cron isn't precise on free tier (can be delayed up to ~1h),
+    # but a day is plenty of buffer.
+    - cron: "17 3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase project endpoints
+        env:
+          # The anon key is a public client-side key — safe to embed in a public
+          # workflow. The service role key would NOT be safe and is never used here.
+          SUPABASE_URL: https://cvwxcgwoenibxqdtncec.supabase.co
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -e
+          echo "Pinging auth health..."
+          curl -sS -o /dev/null -w "  /auth/v1/health -> %{http_code}\n" \
+            "${SUPABASE_URL}/auth/v1/health"
+
+          echo "Pinging rest root (touches PostgREST so DB stays warm)..."
+          if [ -n "${SUPABASE_ANON_KEY}" ]; then
+            curl -sS -o /dev/null -w "  /rest/v1/ -> %{http_code}\n" \
+              -H "apikey: ${SUPABASE_ANON_KEY}" \
+              -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+              "${SUPABASE_URL}/rest/v1/"
+          else
+            echo "  SUPABASE_ANON_KEY secret missing - skipping REST ping."
+            echo "  Add it under repo Settings > Secrets and variables > Actions."
+          fi
+
+          echo "Done — Supabase activity recorded."
