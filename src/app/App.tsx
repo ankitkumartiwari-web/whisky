@@ -646,9 +646,20 @@ function AppContent() {
       setIsOnlineSearchLoading(false);
       return;
     }
+    // Skip very short queries — 1 char hits the API for almost-random matches and
+    // wastes rate limit. Two chars is the minimum useful query.
+    if (normalizedSearch.length < 2) {
+      setOnlineSearchSongs([]);
+      setIsOnlineSearchLoading(false);
+      return;
+    }
     let isMounted = true;
     setIsOnlineSearchLoading(true);
     setOnlineSearchError('');
+    // 350ms debounce — long enough to skip the typist's "th-en-th-t-the" mid-word
+    // misfires, short enough that the dropdown still feels live. The cleanup below
+    // also cancels any pending timeout when the query changes again, so only the
+    // latest keystroke ever triggers a request.
     const timeoutHandle = setTimeout(() => {
       searchSongsOnline(searchQuery, 12).then((result) => {
         if (!isMounted) return;
@@ -662,7 +673,7 @@ function AppContent() {
         setOnlineSearchError('');
         setIsOnlineSearchLoading(false);
       });
-    }, 260);
+    }, 350);
     return () => { isMounted = false; clearTimeout(timeoutHandle); };
   }, [normalizedSearch, searchQuery]);
 
@@ -1185,6 +1196,12 @@ function AppContent() {
         displayName={displayName}
         searchQuery={searchQuery}
         onSearchChange={handleSearchChange}
+        suggestions={onlineSearchSongs}
+        isSuggestionsLoading={isOnlineSearchLoading}
+        onSuggestionPick={(song) => {
+          setSearchQuery('');
+          void handlePlaySong(song);
+        }}
       />
 
       <main className="pt-40 pb-40 px-12 ml-20">
