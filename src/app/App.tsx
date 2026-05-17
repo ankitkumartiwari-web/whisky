@@ -779,7 +779,19 @@ function AppContent() {
     const el = audioElRef.current;
     if (!el || !directAudioUrl) return;
     if (isPlaying) {
-      el.play().catch(() => {/* autoplay may be blocked momentarily */});
+      // First try a normal play() — works in 99% of cases since we set
+      // autoplayPolicy: 'no-user-gesture-required' on the BrowserWindow.
+      // When it fails (e.g. listener-B receiving a remote song without a fresh
+      // local gesture), fall back to the muted-autoplay trick: muted playback
+      // is always allowed by Chromium, so we start muted, then unmute as soon
+      // as playback is going.
+      el.play().catch(() => {
+        const original = el.muted;
+        el.muted = true;
+        el.play()
+          .then(() => { el.muted = original; })
+          .catch(() => { el.muted = original; });
+      });
     } else {
       el.pause();
     }

@@ -1,7 +1,7 @@
 {
   "name": "whisky-music-app",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -15,7 +15,8 @@
     "build:server": "node scripts/bundle-server.cjs",
     "dist": "node scripts/build-icon.cjs && node scripts/bundle-server.cjs && vite build && electron-builder",
     "dist:win": "node scripts/build-icon.cjs && node scripts/bundle-server.cjs && vite build && electron-builder --win --x64",
-    "dist:mac": "node scripts/build-icon.cjs && node scripts/bundle-server.cjs && vite build && electron-builder --mac --universal"
+    "dist:mac": "node scripts/build-icon.cjs && node scripts/bundle-server.cjs && vite build && electron-builder --mac --universal",
+    "release": "node scripts/release.cjs"
   },
   "build": {
     "appId": "com.whisky.music",

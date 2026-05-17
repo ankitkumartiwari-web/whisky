@@ -161,6 +161,7 @@ export function MultiUserSession({
       // it to App.tsx so it actually plays locally.
       channel.on('broadcast', { event: 'now-playing' }, ({ payload }: { payload: RemoteBroadcastSong }) => {
         if (!payload || payload.fromUserId === userIdRef.current) return;
+        console.log('[collab] broadcast received', payload.title, 'by', payload.artist);
         setRemoteSong(payload);
         if (followAlongRef.current) {
           onRemoteSongRef.current?.(payload);
@@ -443,7 +444,17 @@ export function MultiUserSession({
               <input
                 type="checkbox"
                 checked={followAlong}
-                onChange={(event) => setFollowAlong(event.target.checked)}
+                onChange={(event) => {
+                  const next = event.target.checked;
+                  setFollowAlong(next);
+                  // If a remote song is already queued and the user just opted in,
+                  // use this click as the user-gesture to start playback — Chromium
+                  // autoplay heuristics need a fresh interaction even though we set
+                  // autoplayPolicy: 'no-user-gesture-required' on the BrowserWindow.
+                  if (next && remoteSong) {
+                    onRemoteSongRef.current?.(remoteSong);
+                  }
+                }}
                 className="mt-1 h-4 w-4 accent-accent"
               />
               <div>
