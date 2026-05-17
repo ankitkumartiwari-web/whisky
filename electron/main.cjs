@@ -327,6 +327,34 @@ app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
   }
 
+  // Auto-update via electron-updater. Reads from GitHub Releases (provider in
+  // package.json build.publish). Silently downloads in the background and
+  // notifies the user once the new version is staged — they get the update on
+  // next launch. Only runs in packaged builds (autoUpdater no-ops in dev).
+  if (!isDev) {
+    try {
+      const { autoUpdater } = require('electron-updater');
+      autoUpdater.autoDownload = true;
+      autoUpdater.autoInstallOnAppQuit = true;
+      autoUpdater.on('error', (err) => {
+        safeAppendCrash('autoUpdater', err && err.message ? err.message : String(err));
+      });
+      autoUpdater.on('update-available', (info) => {
+        safeAppendCrash('autoUpdater', `update available: ${info?.version || '?'}`);
+      });
+      autoUpdater.on('update-downloaded', (info) => {
+        safeAppendCrash('autoUpdater', `downloaded ${info?.version || '?'} — will install on quit`);
+      });
+      // Fire-and-forget. checkForUpdatesAndNotify shows the OS notification when
+      // an update is downloaded; the actual install runs when the app quits.
+      autoUpdater.checkForUpdatesAndNotify().catch((err) => {
+        safeAppendCrash('autoUpdater', `check failed: ${err && err.message ? err.message : err}`);
+      });
+    } catch (err) {
+      safeAppendCrash('autoUpdater', `init failed: ${err && err.message ? err.message : err}`);
+    }
+  }
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

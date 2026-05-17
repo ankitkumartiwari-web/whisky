@@ -1,7 +1,7 @@
 {
   "name": "whisky-music-app",
   "private": true,
-  "version": "0.0.1",
+  "version": "1.0.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -55,25 +55,33 @@
     "win": {
       "target": [
         {
-          "target": "portable",
+          "target": "nsis",
           "arch": [
             "x64"
           ]
         }
       ],
-      "artifactName": "Whisky-Music-portable.${ext}",
+      "artifactName": "Whisky-Music-Setup.${ext}",
       "icon": "build/icon.ico",
       "signAndEditExecutable": false
     },
-    "portable": {
-      "artifactName": "Whisky-Music-portable.${ext}"
-    },
     "nsis": {
-      "oneClick": false,
+      "oneClick": true,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "deleteAppDataOnUninstall": false
+      "allowToChangeInstallationDirectory": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Whisky Music",
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "Whisky-Music-Setup.${ext}"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ankitkumartiwari-web",
+        "repo": "whisky"
+      }
+    ],
     "mac": {
       "target": [
         {
@@ -129,6 +137,7 @@
     "cors": "^2.8.6",
     "date-fns": "3.6.0",
     "dotenv": "^17.4.0",
+    "electron-updater": "^6.8.3",
     "embla-carousel-react": "8.6.0",
     "express": "^5.2.1",
     "input-otp": "1.4.2",
