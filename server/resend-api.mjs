@@ -2408,6 +2408,54 @@ app.get('/api/audio-stream', async (req, res) => {
   }
 });
 
+// YT Music search — returns music-only results and incorporates relatedness/popularity
+// signal that iTunes search lacks. Used to enrich the recommendation candidate pool.
+const ytmusicSearchCache = new Map();
+const YTMUSIC_SEARCH_TTL_MS = 30 * 60 * 1000;
+
+app.post('/api/search/ytmusic', searchLimiter, async (req, res) => {
+  try {
+    const query = typeof req.body?.query === 'string' ? req.body.query.trim() : '';
+    const limit = Math.max(1, Math.min(Number(req.body?.limit) || 8, 20));
+    if (!query) return res.status(400).json({ error: 'query is required' });
+
+    const cacheKey = `${query.toLowerCase()}|${limit}`;
+    const cached = ytmusicSearchCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return res.json({ source: 'ytmusic-cache', results: cached.results });
+    }
+
+    await ensureYtMusicReady();
+    const raw = await ytmusic.searchSongs(query);
+    if (!Array.isArray(raw)) return res.json({ source: 'ytmusic', results: [] });
+
+    const results = raw.slice(0, limit).map((s) => {
+      const cover = s.thumbnails?.[s.thumbnails.length - 1]?.url
+        || s.thumbnails?.[0]?.url
+        || '';
+      const artistName = s.artist?.name || s.artists?.[0]?.name || 'Unknown Artist';
+      return {
+        id: `ytmusic-${s.videoId}`,
+        title: s.name || 'Unknown',
+        artist: artistName,
+        album: s.album?.name || '',
+        coverUrl: cover,
+        duration: s.duration || 0,
+        isLiked: false,
+        videoId: s.videoId,
+        genre: '',
+        releaseYear: undefined,
+        country: '',
+      };
+    }).filter((s) => s.videoId);
+
+    ytmusicSearchCache.set(cacheKey, { results, expiresAt: Date.now() + YTMUSIC_SEARCH_TTL_MS });
+    return res.json({ source: 'ytmusic', results });
+  } catch (err) {
+    return res.status(500).json({ error: err && err.message ? err.message : 'ytmusic search failed' });
+  }
+});
+
 app.post('/api/search/songs', searchLimiter, async (req, res) => {
   console.log('[API] Incoming search request:', req.body);
   try {

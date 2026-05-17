@@ -823,7 +823,9 @@ function AppContent() {
         recentSongs,
         currentSong,
       });
-      const seeds = buildSeedQueries(profile).slice(0, 6);
+      // Use up to 10 seeds (was 6) for a bigger pool — combined with the YT Music
+      // source below we now have ~80 candidates to rank instead of ~18.
+      const seeds = buildSeedQueries(profile).slice(0, 10);
       if (seeds.length === 0) {
         setAiRecommendedSongs([]);
         setIsRecommendationLoading(false);
@@ -834,27 +836,48 @@ function AppContent() {
       const seenIds = new Set<string>();
       let firstShown = false;
 
-      const tasks = seeds.map(({ query, country }) =>
-        searchSongsOnline(query, 3, country)
-          .then((res) => {
-            if (!isMounted) return;
-            (res.data ?? []).forEach((song) => {
-              if (seenIds.has(song.id)) return;
-              seenIds.add(song.id);
-              collected.push(song);
-            });
-            const ranked = rankAndDiversify(collected, profile, 12);
-            if (ranked.length > 0) {
-              setAiRecommendedSongs(ranked);
-              setAiRecommendationError('');
-            }
-            if (!firstShown && ranked.length > 0) {
-              firstShown = true;
-              setIsRecommendationLoading(false);
-            }
+      const addSongs = (songs: Song[]) => {
+        songs.forEach((song) => {
+          // De-dupe across both sources by videoId — iTunes IDs and YT Music IDs
+          // differ but the videoId is the canonical key for "same playable song".
+          const key = song.videoId || song.id;
+          if (seenIds.has(key)) return;
+          seenIds.add(key);
+          collected.push(song);
+        });
+        const ranked = rankAndDiversify(collected, profile, 12);
+        if (ranked.length > 0) {
+          setAiRecommendedSongs(ranked);
+          setAiRecommendationError('');
+        }
+        if (!firstShown && ranked.length > 0) {
+          firstShown = true;
+          setIsRecommendationLoading(false);
+        }
+      };
+
+      const itunesTasks = seeds.map(({ query, country }) =>
+        searchSongsOnline(query, 4, country)
+          .then((res) => { if (isMounted) addSongs(res.data ?? []); })
+          .catch(() => {}),
+      );
+
+      // YT Music as second source — music-only results with built-in popularity
+      // signal. Combined with iTunes the engine has more variety to rank.
+      const ytmusicTasks = seeds.slice(0, 6).map(({ query }) =>
+        fetch('/api/search/ytmusic', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query, limit: 6 }),
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data: { results?: Song[] } | null) => {
+            if (isMounted && data?.results) addSongs(data.results);
           })
           .catch(() => {}),
       );
+
+      const tasks = [...itunesTasks, ...ytmusicTasks];
 
       Promise.all(tasks).then(() => {
         if (!isMounted) return;
