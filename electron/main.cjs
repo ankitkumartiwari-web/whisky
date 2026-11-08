@@ -1,4 +1,4 @@
-const path = require('node:path');
+﻿const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 
@@ -38,19 +38,33 @@ process.on('unhandledRejection', (reason) => {
 
 const { app, BrowserWindow, shell, Menu, dialog } = require('electron');
 const { spawn } = require('node:child_process');
+const net = require('node:net');
 
 // Suppress Electron's built-in error dialogs entirely.
 if (dialog && typeof dialog.showErrorBox === 'function') {
   const originalShowErrorBox = dialog.showErrorBox.bind(dialog);
   dialog.showErrorBox = (title, content) => {
     safeAppendCrash('showErrorBox', `${title}: ${content}`);
-    // intentionally swallow — do not show the dialog
+    // intentionally swallow â€” do not show the dialog
     void originalShowErrorBox; // silence linter
   };
 }
 
 const isDev = !app.isPackaged;
-const API_PORT = Number(process.env.RESEND_API_PORT || 8787);
+const CONFIGURED_API_PORT = Number(process.env.RESEND_API_PORT || 8787);
+// Resolved at startup. If the preferred port is taken (another Whisky instance or an
+// unrelated app), we fall back to the next free one instead of silently running without
+// a backend â€” without this the UI loads from file:// and every /api call fails.
+let apiPort = CONFIGURED_API_PORT;
+const API_PORT_CANDIDATES = [
+  CONFIGURED_API_PORT,
+  8788,
+  8789,
+  // 8790 is reserved for the Python recommender; 8799 for the YT Music provider.
+  8791,
+  8792,
+  8793,
+];
 const DEV_URL = process.env.ELECTRON_DEV_URL || 'http://localhost:5173';
 
 let mainWindow = null;
@@ -64,7 +78,7 @@ const YT_DLP_BINARY_NAME =
       ? 'yt-dlp_macos'
       : 'yt-dlp';
 
-// Enforce single instance — second launches focus the running window instead of opening a new one.
+// Enforce single instance â€” second launches focus the running window instead of opening a new one.
 // Must be before app.whenReady() so the second invocation exits before doing any work.
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -109,33 +123,40 @@ function resolveEnvPath() {
   return null;
 }
 
-async function isApiAlreadyUp() {
+function isPortFree(port) {
+  return new Promise((resolve) => {
+    const probe = net.createServer();
+    probe.once('error', () => resolve(false));
+    probe.once('listening', () => {
+      probe.close(() => resolve(true));
+    });
+    probe.listen(port, '127.0.0.1');
+  });
+}
+
+async function isWhiskyApiUp(port) {
   try {
-    const res = await fetch(`http://127.0.0.1:${API_PORT}/api/health`);
-    return res.ok;
+    const res = await fetch(`http://127.0.0.1:${port}/api/health`);
+    if (!res.ok) return false;
+    const payload = await res.json().catch(() => null);
+    return payload?.apiVersion === 2;
   } catch {
     return false;
   }
 }
 
-async function startApiServer() {
-  if (apiProcess) return;
-  // Don't spawn a duplicate if dev mode already has the API running on this port.
-  if (await isApiAlreadyUp()) {
-    safeAppendCrash('startApiServer', `API already up on ${API_PORT}, skipping spawn`);
-    return;
-  }
+function spawnApiOnPort(port) {
   const entry = resolveServerEntry();
   if (!fs.existsSync(entry)) {
     safeAppendCrash('startApiServer', `API entry not found at ${entry}`);
-    return;
+    return false;
   }
 
   const envPath = resolveEnvPath();
   const cwd = envPath ? path.dirname(envPath) : path.join(__dirname, '..');
   const childEnv = {
     ...process.env,
-    RESEND_API_PORT: String(API_PORT),
+    RESEND_API_PORT: String(port),
     // Critical for packaged builds: process.execPath is the Electron binary; this flag tells it to
     // run our script as Node (no GUI, no Chromium). Without this, the API "spawns" but is actually
     // an empty Electron renderer that never starts Express.
@@ -157,7 +178,7 @@ async function startApiServer() {
     if (fs.existsSync(devYtdlp)) childEnv.YTDLP_PATH = devYtdlp;
   }
 
-  // In packaged builds, process.stdout/stderr are not real pipes — writing to them throws EPIPE.
+  // In packaged builds, process.stdout/stderr are not real pipes â€” writing to them throws EPIPE.
   // Open a log file we can safely append to instead.
   let logStream = null;
   try {
@@ -172,32 +193,55 @@ async function startApiServer() {
     logStream = null;
   }
 
-  apiProcess = spawn(process.execPath, [entry], {
+  const child = spawn(process.execPath, [entry], {
     cwd,
     env: childEnv,
     stdio: ['ignore', logStream ? 'pipe' : 'ignore', logStream ? 'pipe' : 'ignore'],
   });
+  apiProcess = child;
 
-  if (logStream && apiProcess.stdout) {
-    apiProcess.stdout.on('data', (chunk) => {
+  if (logStream && child.stdout) {
+    child.stdout.on('data', (chunk) => {
       try { logStream && logStream.write(`[api] ${chunk}`); } catch { /* ignore */ }
     });
-    apiProcess.stdout.on('error', () => {});
+    child.stdout.on('error', () => {});
   }
-  if (logStream && apiProcess.stderr) {
-    apiProcess.stderr.on('data', (chunk) => {
+  if (logStream && child.stderr) {
+    child.stderr.on('data', (chunk) => {
       try { logStream && logStream.write(`[api err] ${chunk}`); } catch { /* ignore */ }
     });
-    apiProcess.stderr.on('error', () => {});
+    child.stderr.on('error', () => {});
   }
-  apiProcess.on('error', (err) => {
+  child.on('error', (err) => {
     try { logStream && logStream.write(`[api spawn error] ${err.message}\n`); } catch { /* ignore */ }
   });
-  apiProcess.on('exit', (code, signal) => {
+  child.on('exit', (code, signal) => {
     try { logStream && logStream.write(`[whisky] API process exited code=${code} signal=${signal}\n`); } catch { /* ignore */ }
     if (logStream) logStream.end();
-    apiProcess = null;
+    if (apiProcess === child) apiProcess = null;
   });
+  return true;
+}
+
+async function startApiServer() {
+  if (apiProcess) return;
+  for (const port of API_PORT_CANDIDATES) {
+    if (await isWhiskyApiUp(port)) {
+      apiPort = port;
+      safeAppendCrash('startApiServer', `Reusing Whisky API already running on ${port}`);
+      return;
+    }
+    if (!(await isPortFree(port))) {
+      safeAppendCrash('startApiServer', `Port ${port} is in use by another app, trying next`);
+      continue;
+    }
+    apiPort = port;
+    if (!spawnApiOnPort(port)) return;
+    if (await waitForApi(12000)) return;
+    safeAppendCrash('startApiServer', `API on ${port} never became healthy, trying next`);
+    stopApiServer();
+  }
+  safeAppendCrash('startApiServer', `No usable local API port among ${API_PORT_CANDIDATES.join(', ')}`);
 }
 
 function stopApiServer() {
@@ -214,7 +258,7 @@ async function waitForApi(timeoutMs = 15000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const res = await fetch(`http://127.0.0.1:${API_PORT}/api/health`);
+      const res = await fetch(`http://127.0.0.1:${apiPort}/api/health`);
       if (res.ok) return true;
     } catch {
       // not ready yet
@@ -312,9 +356,9 @@ async function createWindow() {
       if (!mainWindow) return;
       try {
         if (apiReady) {
-          await mainWindow.loadURL(`http://127.0.0.1:${API_PORT}/`);
+          await mainWindow.loadURL(`http://127.0.0.1:${apiPort}/`);
         } else {
-          // Fallback: API never came up — load file:// so the user sees the UI even
+          // Fallback: API never came up â€” load file:// so the user sees the UI even
           // though YouTube embed will be broken. Better than a stuck splash.
           await mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
         }
@@ -361,7 +405,7 @@ app.whenReady().then(async () => {
 
   // Auto-update via electron-updater. Reads from GitHub Releases (provider in
   // package.json build.publish). Silently downloads in the background and
-  // notifies the user once the new version is staged — they get the update on
+  // notifies the user once the new version is staged â€” they get the update on
   // next launch. Only runs in packaged builds (autoUpdater no-ops in dev).
   if (!isDev) {
     try {
@@ -375,7 +419,7 @@ app.whenReady().then(async () => {
         safeAppendCrash('autoUpdater', `update available: ${info?.version || '?'}`);
       });
       autoUpdater.on('update-downloaded', (info) => {
-        safeAppendCrash('autoUpdater', `downloaded ${info?.version || '?'} — will install on quit`);
+        safeAppendCrash('autoUpdater', `downloaded ${info?.version || '?'} â€” will install on quit`);
       });
       // Fire-and-forget. checkForUpdatesAndNotify shows the OS notification when
       // an update is downloaded; the actual install runs when the app quits.

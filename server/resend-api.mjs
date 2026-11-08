@@ -1,9 +1,12 @@
-
+﻿
 import dotenv from 'dotenv';
 // In packaged builds main.cjs sets DOTENV_CONFIG_PATH to the .env shipped via extraResources;
 // in dev it falls back to dotenv's default cwd lookup.
 const envPath = process.env.DOTENV_CONFIG_PATH;
-dotenv.config({ override: true, path: envPath || undefined });
+// Never let the bundled .env override variables passed by the Electron main process
+// (notably RESEND_API_PORT): a fixed port in .env would defeat the port-fallback logic
+// and leave the app without a backend when that port is taken.
+dotenv.config({ path: envPath || undefined });
 import YTMusic from 'ytmusic-api';
 const ytmusic = new YTMusic();
 import { appendFile, mkdir } from 'node:fs/promises';
@@ -18,7 +21,7 @@ const serverDir = path.dirname(fileURLToPath(import.meta.url));
 // --- YouTube Enrichment Layer for iTunes Results ---
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 if (!YOUTUBE_API_KEY) {
-  console.warn('⚠️ Missing YOUTUBE_API_KEY');
+  console.warn('âš ï¸ Missing YOUTUBE_API_KEY');
 }
 const youtubeCache = new Map(); // key: `${title}|${artist}`
 
@@ -71,7 +74,7 @@ async function searchYouTubeHtmlForSong(title, artist) {
   }
 }
 
-// Reuse a single ytmusic init promise — calling .initialize() repeatedly is wasteful.
+// Reuse a single ytmusic init promise â€” calling .initialize() repeatedly is wasteful.
 let ytmusicReadyPromise = null;
 async function ensureYtMusicReady() {
   if (!ytmusicReadyPromise) {
@@ -113,7 +116,7 @@ async function isVideoEmbeddable(videoId) {
       console.warn('[EmbedCheck] fetch failed:', err && err.message ? err.message : err);
     }
   }
-  // API unavailable (quota/key/network) — optimistically allow it. The player's
+  // API unavailable (quota/key/network) â€” optimistically allow it. The player's
   // own onError retry loop is the safety net.
   return true;
 }
@@ -124,7 +127,7 @@ async function searchYTMusicForSong(title, artist) {
     const query = `${title} ${artist}`.trim();
     const results = await ytmusic.searchSongs(query);
     if (!Array.isArray(results)) return null;
-    // Walk the top results and return the first one that's actually embeddable —
+    // Walk the top results and return the first one that's actually embeddable â€”
     // YT Music can surface videos whose owners have disabled embedding (especially
     // major-label tracks), and those return error 150 in the IFrame player.
     for (const candidate of results.slice(0, 5)) {
@@ -142,7 +145,7 @@ async function searchYTMusicForSong(title, artist) {
 }
 
 async function searchYouTubeForSong(title, artist) {
-  // Cache key prefixed v4 because v3 didn't validate embeddability — every cached
+  // Cache key prefixed v4 because v3 didn't validate embeddability â€” every cached
   // entry might be a non-embeddable videoId.
   const key = `v4|${title.toLowerCase().trim()}|${artist.toLowerCase().trim()}`;
   const now = Date.now();
@@ -160,7 +163,7 @@ async function searchYouTubeForSong(title, artist) {
     const query = encodeURIComponent(`${title} ${artist} official song`);
     try {
       console.log('[YouTubeSearch] Searching:', `${title} - ${artist}`);
-      // videoEmbeddable=true filters out videos whose owners disabled IFrame embedding —
+      // videoEmbeddable=true filters out videos whose owners disabled IFrame embedding â€”
       // without this, YouTube returns matches that 401/150 in our embedded player and
       // playback silently fails.
       const res = await fetch(
@@ -180,7 +183,7 @@ async function searchYouTubeForSong(title, artist) {
   }
 
   if (!videoId) {
-    // YT Music returns embeddable Topic-channel uploads — try this BEFORE the HTML
+    // YT Music returns embeddable Topic-channel uploads â€” try this BEFORE the HTML
     // scraper, which often returns non-embeddable user-uploaded music videos.
     videoId = await searchYTMusicForSong(title, artist);
   }
@@ -206,7 +209,7 @@ async function attachYouTubeIdsToSongs(songs) {
   );
   return results;
 }
-// dotenv already configured at top of file with override: true
+// dotenv already configured at top of file (real env vars take precedence)
 import express from 'express';
 import cors from 'cors';
 import { Resend } from 'resend';
@@ -1027,7 +1030,7 @@ function stripLyricsTitleNoise(value) {
       /\[(?:[^\[\]]*?(?:from|feat\.?|ft\.?|with|remaster|version|live|edit|soundtrack)[^\[\]]*?)\]/gi,
       ' ',
     )
-    .replace(/\s*[-–—]\s*(?:remaster(?:ed)?(?:\s+\d{4})?|live|radio edit|single version|from\s+.+)$/i, ' ')
+    .replace(/\s*[-â€“â€”]\s*(?:remaster(?:ed)?(?:\s+\d{4})?|live|radio edit|single version|from\s+.+)$/i, ' ')
     .replace(/\s+(?:feat\.?|ft\.?|with)\s+.+$/i, ' ')
     .replace(/\s{2,}/g, ' ')
     .trim();
@@ -1122,7 +1125,7 @@ async function fetchLrclibLyrics(songTitle, artistName = '') {
         return exactMetadata;
       }
 
-      // 2) Fuzzy search fallback — prefer the best title/artist match with synced lyrics.
+      // 2) Fuzzy search fallback â€” prefer the best title/artist match with synced lyrics.
       const searchUrl = new URL('https://lrclib.net/api/search');
       searchUrl.searchParams.set('track_name', attempt.track);
       if (attempt.artist) searchUrl.searchParams.set('artist_name', attempt.artist);
@@ -2419,7 +2422,7 @@ app.get('/api/resolve-alt', async (req, res) => {
   if (!title) return res.status(400).json({ error: 'title is required' });
   try {
     const query = `${title} ${artist}`.trim();
-    // Collect candidates from both sources first — a ytmusic outage used to skip
+    // Collect candidates from both sources first â€” a ytmusic outage used to skip
     // the HTML fallback entirely (shared try/catch) and return nothing.
     const candidates = [];
     const seen = new Set();
@@ -2452,13 +2455,13 @@ app.get('/api/resolve-alt', async (req, res) => {
         return res.json({ videoId: candidate.videoId, source: candidate.source });
       }
     }
-    // Nothing embeddable — hand back an untried candidate anyway. yt-dlp extracts
+    // Nothing embeddable â€” hand back an untried candidate anyway. yt-dlp extracts
     // audio regardless of embed restrictions, so the direct-audio path plays it;
     // if extraction fails the client's onError loop excludes it and retries.
     if (candidates.length > 0) {
       return res.json({ videoId: candidates[0].videoId, source: `${candidates[0].source}-any` });
     }
-    // Always 200 — the client distinguishes "endpoint missing" from "no result" by
+    // Always 200 â€” the client distinguishes "endpoint missing" from "no result" by
     // checking whether videoId is null. 404 here gets misread as a route bug.
     return res.json({ videoId: null, source: 'none' });
   } catch (err) {
@@ -2466,7 +2469,7 @@ app.get('/api/resolve-alt', async (req, res) => {
   }
 });
 
-// Cache extracted audio URLs — googlevideo URLs expire after a few hours, so cap TTL
+// Cache extracted audio URLs â€” googlevideo URLs expire after a few hours, so cap TTL
 // well below that. Avoids re-running yt-dlp for the same videoId on every play.
 const audioUrlCache = new Map();
 const AUDIO_URL_TTL_MS = 90 * 60 * 1000; // 90 min, googlevideo signs expire ~6h
@@ -2559,7 +2562,7 @@ app.get('/api/audio-stream', async (req, res) => {
   }
 });
 
-// YT Music search — returns music-only results and incorporates relatedness/popularity
+// YT Music search â€” returns music-only results and incorporates relatedness/popularity
 // signal that iTunes search lacks. Used to enrich the recommendation candidate pool.
 const ytmusicSearchCache = new Map();
 const YTMUSIC_SEARCH_TTL_MS = 30 * 60 * 1000;
@@ -2814,12 +2817,12 @@ app.post('/api/ai-curator/chat', aiLimiter, async (req, res) => {
       'You are a friendly and knowledgeable music curator named "Whisky".',
       `Respond ONLY in ${safeResponseLanguage}. ${
         safeResponseLanguage === 'Hindi'
-          ? 'Use natural conversational Hindi in Devanagari script for responseText, facts, and the playlist name and description. Keep proper nouns (artist names, song titles) in their original spelling — do NOT transliterate them. Use Hinglish only if a word has no common Devanagari equivalent.'
+          ? 'Use natural conversational Hindi in Devanagari script for responseText, facts, and the playlist name and description. Keep proper nouns (artist names, song titles) in their original spelling â€” do NOT transliterate them. Use Hinglish only if a word has no common Devanagari equivalent.'
           : 'Use natural conversational English.'
       }`,
       'You ONLY discuss music, songs, artists, albums, genres, music history, music industry, soundtracks, and movies/films when relevant to their soundtrack or featured songs.',
       'You DO NOT answer questions outside of these topics. If a user asks anything off-topic (general trivia, news, math, code, personal advice, weather, politics, religion, etc.), respond politely declining and steer them back to music with an example question.',
-      'Return STRICT JSON only — no markdown fences, no commentary outside the JSON.',
+      'Return STRICT JSON only â€” no markdown fences, no commentary outside the JSON.',
       'Schema:',
       '{',
       '  "intent": "facts" | "playlist" | "explain" | "chat" | "off_topic",',
@@ -2837,7 +2840,7 @@ app.post('/api/ai-curator/chat', aiLimiter, async (req, res) => {
       '- Use "playlist" with 8-12 real, popular songs by named real artists when the user wants a mix, vibe, recommendation, or movie-soundtrack-style mix. Mix well-known and adjacent picks. Match the user\'s preferred languages and the current/recent listening when context is given.',
       '- Movies/films are in scope ONLY for their music: soundtrack, score, featured songs, composer, music director, playback singers. Decline questions about plot, cast, reviews, etc.',
       '- For chit-chat or short music clarifications, set facts=[] and playlist=null.',
-      '- Never include track ids — only title and artist as the listener would type them.',
+      '- Never include track ids â€” only title and artist as the listener would type them.',
       '- Keep responseText warm, concrete, and short.',
     ].join('\n');
 
@@ -2957,7 +2960,7 @@ app.post('/api/ai-curator/chat', aiLimiter, async (req, res) => {
 });
 
 // Serve the packaged UI from this server when WHISKY_STATIC_DIR is set so the renderer
-// loads from http://localhost (a real http origin) instead of file:// — required for the
+// loads from http://localhost (a real http origin) instead of file:// â€” required for the
 // YouTube IFrame postMessage handshake to accept play/pause commands.
 const staticDir = process.env.WHISKY_STATIC_DIR;
 if (staticDir) {
