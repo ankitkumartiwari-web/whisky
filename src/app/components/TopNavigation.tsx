@@ -66,6 +66,13 @@ export function TopNavigation({
   recentSongs = [],
 }: TopNavigationProps) {
   const { theme, toggleTheme } = useTheme();
+  // Windows draws its window controls as an overlay inside the app frame, so the
+  // bar reserves space for them. macOS/Linux keep the native frame.
+  const desktopPlatform =
+    typeof window !== 'undefined'
+      ? window.whiskyDesktop?.platform ?? window.__WHISKY_PLATFORM__
+      : undefined;
+  const isWindowsDesktop = desktopPlatform === 'win32';
   const initials = getInitials(displayName);
   const searchHint = searchQuery.trim()
     ? `Recommendations for "${searchQuery.trim()}" will appear below.`
@@ -182,8 +189,10 @@ export function TopNavigation({
 
   return (
     <div className="fixed top-0 left-20 right-0 bg-background/60 backdrop-blur-xl border-b border-border z-40">
-      {/* Right padding clears the Windows titleBarOverlay (~138px of min/max/close). */}
-      <div className="pl-12 pr-[160px] py-6 flex items-center justify-between">
+      {/* Windows reserves ~160px on the right for the titleBarOverlay controls. */}
+      <div
+        className={`pl-12 ${isWindowsDesktop ? 'pr-[160px]' : 'pr-12'} py-6 flex items-center justify-between`}
+      >
         {/* Search Bar */}
         <div className="flex-1 max-w-2xl" ref={wrapperRef}>
           <div className="space-y-2 relative">

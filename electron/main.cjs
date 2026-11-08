@@ -8,10 +8,16 @@ function safeAppendCrash(label, payload) {
     // Write to BOTH the legacy "Whisky Music" path and Electron's actual userData
     // (whisky-music-app, taken from npm name). Whichever exists first wins; logging
     // to both means we always have a trail no matter which folder Electron creates.
-    const dirs = [
-      path.join(os.homedir(), 'AppData', 'Roaming', 'Whisky Music'),
-      path.join(os.homedir(), 'AppData', 'Roaming', 'whisky-music-app'),
-    ];
+    const dirs = [];
+    if (process.platform === 'win32') {
+      dirs.push(path.join(os.homedir(), 'AppData', 'Roaming', 'Whisky Music'));
+      dirs.push(path.join(os.homedir(), 'AppData', 'Roaming', 'whisky-music-app'));
+    } else if (process.platform === 'darwin') {
+      dirs.push(path.join(os.homedir(), 'Library', 'Logs', 'Whisky Music'));
+      dirs.push(path.join(os.homedir(), 'Library', 'Logs', 'whisky-music-app'));
+    } else {
+      dirs.push(path.join(os.homedir(), '.local', 'state', 'whisky-music-app'));
+    }
     for (const dir of dirs) {
       try {
         fs.mkdirSync(dir, { recursive: true });
@@ -49,6 +55,14 @@ const DEV_URL = process.env.ELECTRON_DEV_URL || 'http://localhost:5173';
 
 let mainWindow = null;
 let apiProcess = null;
+
+// yt-dlp bundle name differs per platform (electron-builder copies it into resources).
+const YT_DLP_BINARY_NAME =
+  process.platform === 'win32'
+    ? 'yt-dlp.exe'
+    : process.platform === 'darwin'
+      ? 'yt-dlp_macos'
+      : 'yt-dlp';
 
 // Enforce single instance — second launches focus the running window instead of opening a new one.
 // Must be before app.whenReady() so the second invocation exits before doing any work.
@@ -133,13 +147,13 @@ async function startApiServer() {
     // (a real http origin) instead of file://. Required for the YouTube IFrame API to
     // accept play/pause/seek postMessage commands.
     childEnv.WHISKY_STATIC_DIR = path.join(__dirname, '..', 'dist');
-    // Point the API at the bundled yt-dlp.exe so it can extract direct audio URLs
+    // Point the API at the bundled yt-dlp binary so it can extract direct audio URLs
     // for songs whose YouTube embed is blocked (the common label-restricted case).
-    const ytdlp = path.join(process.resourcesPath, 'yt-dlp.exe');
+    const ytdlp = path.join(process.resourcesPath, YT_DLP_BINARY_NAME);
     if (fs.existsSync(ytdlp)) childEnv.YTDLP_PATH = ytdlp;
   } else {
     // In dev, look for yt-dlp in the project's build dir.
-    const devYtdlp = path.join(__dirname, '..', 'build', 'yt-dlp.exe');
+    const devYtdlp = path.join(__dirname, '..', 'build', YT_DLP_BINARY_NAME);
     if (fs.existsSync(devYtdlp)) childEnv.YTDLP_PATH = devYtdlp;
   }
 
@@ -211,15 +225,21 @@ async function waitForApi(timeoutMs = 15000) {
 }
 
 function resolveAppIcon() {
-  const candidates = isDev
-    ? [path.join(__dirname, '..', 'build', 'icon.ico'), path.join(__dirname, '..', 'build', 'icon.png')]
+  // Windows uses the ICO; macOS/Linux ignore the window icon (the bundle icon is
+  // supplied by electron-builder) but a PNG keeps dev windows branded too.
+  const names = process.platform === 'win32' ? ['icon.ico', 'icon.png'] : ['icon.png'];
+  const roots = isDev
+    ? [path.join(__dirname, '..', 'build')]
     : [
-        path.join(process.resourcesPath, 'icon.ico'),
-        path.join(process.resourcesPath, 'app.asar.unpacked', 'build', 'icon.ico'),
-        path.join(__dirname, '..', 'build', 'icon.ico'),
+        process.resourcesPath,
+        path.join(process.resourcesPath, 'app.asar.unpacked', 'build'),
+        path.join(__dirname, '..', 'build'),
       ];
-  for (const c of candidates) {
-    if (fs.existsSync(c)) return c;
+  for (const root of roots) {
+    for (const name of names) {
+      const c = path.join(root, name);
+      if (fs.existsSync(c)) return c;
+    }
   }
   return undefined;
 }
@@ -232,7 +252,9 @@ async function createWindow() {
     minWidth: 1024,
     minHeight: 720,
     backgroundColor: '#0E0B07',
-    titleBarStyle: 'hidden',
+    // macOS keeps the native traffic lights, inset so they don't overlap the
+    // sidebar. Windows uses the overlay controls coloured to match the theme.
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
     titleBarOverlay: process.platform === 'win32'
       ? { color: '#0E0B07', symbolColor: '#F4ECDC', height: 32 }
       : undefined,
@@ -324,6 +346,16 @@ app.whenReady().then(async () => {
   await createWindow();
 
   if (process.platform === 'darwin') {
+    // Keep the standard macOS app + Edit menus so Cmd+C/V/X/A and window
+    // shortcuts work inside the search box and dialogs.
+    Menu.setApplicationMenu(
+      Menu.buildFromTemplate([
+        { role: 'appMenu' },
+        { role: 'editMenu' },
+        { role: 'windowMenu' },
+      ]),
+    );
+  } else {
     Menu.setApplicationMenu(null);
   }
 

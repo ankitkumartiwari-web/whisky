@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { X, Heart, Share2, Plus, Play, Pause, Clock, Disc, Music2, Calendar, ChevronDown, ChevronUp, Check } from 'lucide-react';
+import { X, Heart, Share2, Plus, Play, Pause, Clock, Disc, Music2, Calendar, ChevronDown, ChevronUp, Check, Crosshair, RotateCcw } from 'lucide-react';
 import { Song } from '../data/mockData';
 import { motion, AnimatePresence } from 'motion/react';
 import { WaveformVisualizer } from './WaveformVisualizer';
@@ -46,6 +46,37 @@ const getAccentColor = (songId: string): string => {
   };
   return colors[songId] ?? '#D8A35C';
 };
+
+// Per-song lyric offset (seconds). Positive = lyrics appear later, which is the
+// common case when the YouTube video has a longer intro than the studio LRC.
+const LYRICS_OFFSET_KEY = 'whisky-lyrics-offsets';
+const MAX_LYRICS_OFFSET_S = 30;
+
+function readLyricsOffset(songId: string | undefined): number {
+  if (!songId) return 0;
+  try {
+    const raw = window.localStorage.getItem(LYRICS_OFFSET_KEY);
+    if (!raw) return 0;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const value = parsed?.[songId];
+    return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function writeLyricsOffset(songId: string | undefined, value: number) {
+  if (!songId) return;
+  try {
+    const raw = window.localStorage.getItem(LYRICS_OFFSET_KEY);
+    const parsed = raw ? (JSON.parse(raw) as Record<string, number>) : {};
+    if (value === 0) delete parsed[songId];
+    else parsed[songId] = value;
+    window.localStorage.setItem(LYRICS_OFFSET_KEY, JSON.stringify(parsed));
+  } catch {
+    // Offsets are a convenience — storage failure shouldn't break playback.
+  }
+}
 
 export function SongDetailsPage({
   song,
@@ -177,6 +208,41 @@ export function SongDetailsPage({
 
   const [activeLineIndex, setActiveLineIndex] = useState(-1);
   const activeLineIndexRef = useRef(-1);
+  const [lyricsOffset, setLyricsOffset] = useState(0);
+  const playbackTimeRef = useRef(0);
+
+  useEffect(() => {
+    setLyricsOffset(readLyricsOffset(song?.id));
+  }, [song?.id]);
+
+  const nudgeLyricsOffset = (delta: number) => {
+    const next = Math.max(
+      -MAX_LYRICS_OFFSET_S,
+      Math.min(MAX_LYRICS_OFFSET_S, Math.round((lyricsOffset + delta) * 10) / 10),
+    );
+    setLyricsOffset(next);
+    writeLyricsOffset(song?.id, next);
+  };
+
+  // One-tap calibration: the user presses this the moment the first synced line
+  // is sung, and we shift every timestamp by the difference. Handles intros and
+  // version-length differences without a full editor.
+  const calibrateLyricsOffset = () => {
+    const first = syncedLinesPrecomputed[0];
+    const now = playbackTimeRef.current;
+    if (!first || !Number.isFinite(now) || now <= 0) return;
+    const next = Math.max(
+      -MAX_LYRICS_OFFSET_S,
+      Math.min(MAX_LYRICS_OFFSET_S, Math.round((now - first.time) * 10) / 10),
+    );
+    setLyricsOffset(next);
+    writeLyricsOffset(song?.id, next);
+  };
+
+  const resetLyricsOffset = () => {
+    setLyricsOffset(0);
+    writeLyricsOffset(song?.id, 0);
+  };
 
   // Drive the highlighted line straight from the audio element every frame.
   // Reading media.currentTime avoids the ~250ms lag of React state updates.
@@ -216,7 +282,9 @@ export function SongDetailsPage({
     };
 
     const loop = () => {
-      const idx = indexFor(readTime());
+      const now = readTime();
+      playbackTimeRef.current = now;
+      const idx = indexFor(now - lyricsOffset);
       if (idx !== activeLineIndexRef.current) {
         activeLineIndexRef.current = idx;
         setActiveLineIndex(idx);
@@ -225,7 +293,7 @@ export function SongDetailsPage({
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [isOpen, syncedLinesPrecomputed, audioRef, playerRef, playbackTime, song?.duration, progress]);
+  }, [isOpen, syncedLinesPrecomputed, audioRef, playerRef, playbackTime, song?.duration, progress, lyricsOffset]);
 
   useEffect(() => {
     activeLineIndexRef.current = -1;
@@ -761,6 +829,63 @@ export function SongDetailsPage({
                   {isLyricsLoading ? 'Loading' : lyricsContent ? 'Available' : 'Unavailable'}
                 </span>
               </div>
+              {hasSyncedLyrics && (
+                <div className="mb-4 flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-200/70 bg-white/80 px-3 py-2 text-xs shadow-sm dark:border-white/10 dark:bg-white/5">
+                  <span className="mr-1 text-[10px] uppercase tracking-[0.18em] text-slate-500 dark:text-white/40">
+                    Sync
+                  </span>
+                  {[
+                    { label: '-0.5s', delta: -0.5 },
+                    { label: '-0.1s', delta: -0.1 },
+                  ].map(({ label, delta }) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => nudgeLyricsOffset(delta)}
+                      className="rounded-full border border-slate-200/70 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 transition-colors hover:bg-slate-100 dark:border-white/10 dark:bg-white/5 dark:text-white/70 dark:hover:bg-white/10"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <span className="min-w-[3.25rem] text-center text-[11px] font-semibold tabular-nums text-slate-700 dark:text-white/80">
+                    {lyricsOffset > 0 ? '+' : ''}
+                    {lyricsOffset.toFixed(1)}s
+                  </span>
+                  {[
+                    { label: '+0.1s', delta: 0.1 },
+                    { label: '+0.5s', delta: 0.5 },
+                  ].map(({ label, delta }) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => nudgeLyricsOffset(delta)}
+                      className="rounded-full border border-slate-200/70 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 transition-colors hover:bg-slate-100 dark:border-white/10 dark:bg-white/5 dark:text-white/70 dark:hover:bg-white/10"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={calibrateLyricsOffset}
+                    title="Press when you hear the first lyric line start"
+                    className="ml-1 inline-flex items-center gap-1 rounded-full border border-accent/40 bg-accent/10 px-2.5 py-0.5 text-[11px] font-semibold text-accent transition-colors hover:bg-accent/20"
+                  >
+                    <Crosshair className="h-3.5 w-3.5" />
+                    Sync now
+                  </button>
+                  {lyricsOffset !== 0 && (
+                    <button
+                      type="button"
+                      onClick={resetLyricsOffset}
+                      title="Reset sync offset"
+                      className="inline-flex items-center gap-1 rounded-full border border-slate-200/70 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-500 transition-colors hover:bg-slate-100 dark:border-white/10 dark:bg-white/5 dark:text-white/60 dark:hover:bg-white/10"
+                    >
+                      <RotateCcw className="h-3 w-3" />
+                      Reset
+                    </button>
+                  )}
+                </div>
+              )}
               {nextSongs.length > 0 && (
                 <Collapsible defaultOpen={false} className="mb-5 rounded-2xl border border-slate-200/70 bg-white/80 shadow-sm overflow-hidden dark:border-white/10 dark:bg-white/5">
                   <CollapsibleTrigger asChild>

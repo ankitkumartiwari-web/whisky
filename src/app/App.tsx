@@ -110,6 +110,9 @@ const VALID_MENU_ITEMS = new Set([
 function getStoredActiveMenuItem(): string {
   const value = window.localStorage.getItem(STORAGE_KEYS.activeMenuItem);
   const normalized = value === 'liked' ? 'library' : value;
+  // Search is a transient view driven by the search box. Restoring it on launch
+  // (or after login) leaves the user on an empty "Find Your Next Track" page.
+  if (normalized === 'search') return 'home';
   return normalized && VALID_MENU_ITEMS.has(normalized) ? normalized : 'home';
 }
 
@@ -802,6 +805,17 @@ function AppContent() {
     });
     return () => { isMounted = false; data.subscription.unsubscribe(); };
   }, []);
+
+  // Land on Home whenever a session becomes active (fresh sign-in or restored
+  // session), regardless of which page was open last time.
+  const wasAuthenticatedRef = useRef(false);
+  useEffect(() => {
+    if (isAuthenticated && !wasAuthenticatedRef.current) {
+      setActiveMenuItem('home');
+      setSearchQuery('');
+    }
+    wasAuthenticatedRef.current = isAuthenticated;
+  }, [isAuthenticated]);
 
 
 

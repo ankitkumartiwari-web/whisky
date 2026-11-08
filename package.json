@@ -1,7 +1,7 @@
 {
   "name": "whisky-music-app",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.1.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -43,14 +43,6 @@
       {
         "from": ".env.example",
         "to": ".env"
-      },
-      {
-        "from": "build/icon.ico",
-        "to": "icon.ico"
-      },
-      {
-        "from": "build/yt-dlp.exe",
-        "to": "yt-dlp.exe"
       }
     ],
     "win": {
@@ -64,7 +56,17 @@
       ],
       "artifactName": "Whisky-Music-Setup.${ext}",
       "icon": "build/icon.ico",
-      "signAndEditExecutable": false
+      "signAndEditExecutable": false,
+      "extraResources": [
+        {
+          "from": "build/icon.ico",
+          "to": "icon.ico"
+        },
+        {
+          "from": "build/yt-dlp.exe",
+          "to": "yt-dlp.exe"
+        }
+      ]
     },
     "nsis": {
       "oneClick": true,
@@ -91,10 +93,28 @@
             "x64",
             "arm64"
           ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ],
       "category": "public.app-category.music",
-      "artifactName": "Whisky-Music-${version}-${arch}.${ext}"
+      "artifactName": "Whisky-Music-${version}-${arch}.${ext}",
+      "icon": "build/icon-512.png",
+      "extraResources": [
+        {
+          "from": "build/icon-512.png",
+          "to": "icon.png"
+        },
+        {
+          "from": "build/yt-dlp_macos",
+          "to": "yt-dlp_macos"
+        }
+      ]
     }
   },
   "dependencies": {

@@ -1007,44 +1007,143 @@ async function fetchMusicBrainzMetadata(songTitle, artistName = '') {
   return metadata;
 }
 
+// LRCLIB asks for an identifying User-Agent so they can rate-limit fairly.
+const LRCLIB_HEADERS = {
+  Accept: 'application/json',
+  'User-Agent': 'WhiskyMusic/1.0 (https://github.com/ankitkumartiwari-web/whisky)',
+};
+const LRCLIB_MISS_TTL_MS = 10 * 60 * 1000;
+
+// iTunes/YouTube-style titles carry noise LRCLIB doesn't index: `(From "Bhediya")`,
+// `(feat. X)`, `- Remastered 2011`, `[Live]`. Strip it so we can re-query.
+function stripLyricsTitleNoise(value) {
+  return (value ?? '')
+    .toString()
+    .replace(
+      /\((?:[^()]*?(?:from|feat\.?|ft\.?|with|remaster|version|live|edit|soundtrack)[^()]*?)\)/gi,
+      ' ',
+    )
+    .replace(
+      /\[(?:[^\[\]]*?(?:from|feat\.?|ft\.?|with|remaster|version|live|edit|soundtrack)[^\[\]]*?)\]/gi,
+      ' ',
+    )
+    .replace(/\s*[-–—]\s*(?:remaster(?:ed)?(?:\s+\d{4})?|live|radio edit|single version|from\s+.+)$/i, ' ')
+    .replace(/\s+(?:feat\.?|ft\.?|with)\s+.+$/i, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function buildLrclibMetadata(payload) {
+  if (!payload || typeof payload !== 'object') return null;
+  const plainLyrics = typeof payload.plainLyrics === 'string' ? payload.plainLyrics.trim() : '';
+  const syncedLyrics = typeof payload.syncedLyrics === 'string' ? payload.syncedLyrics.trim() : '';
+  const lyrics = plainLyrics || syncedLyrics;
+  if (!lyrics) return null;
+
+  return {
+    source: 'lrclib',
+    lyrics,
+    syncedLyrics: syncedLyrics || null,
+    albumName: typeof payload.albumName === 'string' && payload.albumName.trim() ? payload.albumName.trim() : null,
+    sourceUrl: typeof payload.url === 'string' && payload.url.trim() ? payload.url.trim() : null,
+    trackName: typeof payload.trackName === 'string' ? payload.trackName : null,
+    artistName: typeof payload.artistName === 'string' ? payload.artistName : null,
+  };
+}
+
+function scoreLrclibResult(item, title, artist) {
+  if (!item || typeof item !== 'object') return 0;
+  const track = normalizeText(item.trackName);
+  const artistName = normalizeText(item.artistName);
+  const wantTitle = normalizeText(title);
+  const wantArtist = normalizeText(artist);
+  let score = 0;
+  if (track && wantTitle) {
+    if (track === wantTitle) score += 6;
+    else if (track.includes(wantTitle) || wantTitle.includes(track)) score += 3;
+  }
+  if (artistName && wantArtist) {
+    if (artistName === wantArtist) score += 6;
+    else if (artistName.includes(wantArtist) || wantArtist.includes(artistName)) score += 3;
+  }
+  if (typeof item.syncedLyrics === 'string' && item.syncedLyrics.trim()) score += 4;
+  return score;
+}
+
+async function lrclibRequest(url) {
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: LRCLIB_HEADERS,
+    signal: AbortSignal.timeout(6000),
+  });
+  if (!response.ok) return null;
+  return response.json().catch(() => null);
+}
+
 async function fetchLrclibLyrics(songTitle, artistName = '') {
   const cleanTitle = sanitizeMetadataInput(songTitle);
   const cleanArtist = sanitizeMetadataInput(artistName);
+  if (!cleanTitle) return null;
+
   const cacheKey = `lrclib:${normalizeText(cleanTitle)}|${normalizeText(cleanArtist)}`;
   const cached = getCachedMetadata(cacheKey);
   if (cached) return cached;
+  // Negative cache: don't hammer LRCLIB for songs it doesn't have.
+  if (getCachedMetadata(`lrclib-miss:${cacheKey}`)) return null;
 
-  const url = new URL('https://lrclib.net/api/get');
-  if (cleanTitle) url.searchParams.set('track_name', cleanTitle);
-  if (cleanArtist) url.searchParams.set('artist_name', cleanArtist);
+  const seen = new Set();
+  const attempts = [];
+  const addAttempt = (track, artist) => {
+    const t = (track ?? '').trim();
+    const a = (artist ?? '').trim();
+    if (!t) return;
+    const key = `${normalizeText(t)}|${normalizeText(a)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    attempts.push({ track: t, artist: a });
+  };
+
+  const strippedTitle = stripLyricsTitleNoise(cleanTitle);
+  addAttempt(cleanTitle, cleanArtist);
+  addAttempt(strippedTitle, cleanArtist);
+  addAttempt(strippedTitle, '');
+  addAttempt(cleanTitle, '');
 
   try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-    });
+    for (const attempt of attempts) {
+      // 1) Exact lookup.
+      const getUrl = new URL('https://lrclib.net/api/get');
+      getUrl.searchParams.set('track_name', attempt.track);
+      if (attempt.artist) getUrl.searchParams.set('artist_name', attempt.artist);
+      const exact = await lrclibRequest(getUrl);
+      const exactMetadata = buildLrclibMetadata(exact);
+      if (exactMetadata) {
+        setCachedMetadata(cacheKey, exactMetadata, lyricsCacheTtlMs);
+        return exactMetadata;
+      }
 
-    if (!response.ok) return null;
+      // 2) Fuzzy search fallback — prefer the best title/artist match with synced lyrics.
+      const searchUrl = new URL('https://lrclib.net/api/search');
+      searchUrl.searchParams.set('track_name', attempt.track);
+      if (attempt.artist) searchUrl.searchParams.set('artist_name', attempt.artist);
+      const results = await lrclibRequest(searchUrl);
+      if (Array.isArray(results) && results.length > 0) {
+        const best = results
+          .map((item) => ({
+            metadata: buildLrclibMetadata(item),
+            score: scoreLrclibResult(item, cleanTitle, cleanArtist),
+          }))
+          .filter((entry) => entry.metadata)
+          .sort((a, b) => b.score - a.score)[0];
+        if (best?.metadata) {
+          setCachedMetadata(cacheKey, best.metadata, lyricsCacheTtlMs);
+          return best.metadata;
+        }
+      }
+    }
 
-    const payload = await response.json().catch(() => null);
-    if (!payload) return null;
-
-    const plainLyrics = typeof payload?.plainLyrics === 'string' ? payload.plainLyrics.trim() : '';
-    const syncedLyrics = typeof payload?.syncedLyrics === 'string' ? payload.syncedLyrics.trim() : '';
-    const lyrics = plainLyrics || syncedLyrics;
-
-    if (!lyrics) return null;
-
-    const metadata = {
-      source: 'lrclib',
-      lyrics,
-      syncedLyrics: syncedLyrics || null,
-      albumName: typeof payload?.albumName === 'string' && payload.albumName.trim() ? payload.albumName.trim() : null,
-      sourceUrl: typeof payload?.url === 'string' && payload.url.trim() ? payload.url.trim() : null,
-    };
-
-    setCachedMetadata(cacheKey, metadata, lyricsCacheTtlMs);
-    return metadata;
+    setCachedMetadata(`lrclib-miss:${cacheKey}`, true, LRCLIB_MISS_TTL_MS);
+    return null;
   } catch {
     return null;
   }
@@ -2372,16 +2471,36 @@ app.get('/api/resolve-alt', async (req, res) => {
 const audioUrlCache = new Map();
 const AUDIO_URL_TTL_MS = 90 * 60 * 1000; // 90 min, googlevideo signs expire ~6h
 
+// yt-dlp ships a different binary per platform: `yt-dlp.exe` on Windows and the
+// universal `yt-dlp_macos` on macOS. Linux (and any PATH install) uses `yt-dlp`.
+const YT_DLP_BINARY_NAMES =
+  process.platform === 'win32'
+    ? ['yt-dlp.exe']
+    : process.platform === 'darwin'
+      ? ['yt-dlp_macos', 'yt-dlp']
+      : ['yt-dlp'];
+
 function resolveYtDlpPath() {
-  const candidates = [
-    process.env.YTDLP_PATH,
-    path.join(process.resourcesPath || '', 'yt-dlp.exe'),
-    path.join(serverDir, '..', 'build', 'yt-dlp.exe'),
-    path.join(process.cwd(), 'build', 'yt-dlp.exe'),
-    path.join(process.cwd(), 'yt-dlp.exe'),
-  ].filter(Boolean);
+  const candidates = [process.env.YTDLP_PATH];
+  for (const name of YT_DLP_BINARY_NAMES) {
+    candidates.push(
+      path.join(process.resourcesPath || '', name),
+      path.join(serverDir, '..', 'build', name),
+      path.join(process.cwd(), 'build', name),
+      path.join(process.cwd(), name),
+    );
+  }
   for (const p of candidates) {
-    try { if (p && require('node:fs').existsSync(p)) return p; } catch { /* skip */ }
+    if (!p) continue;
+    try {
+      if (require('node:fs').existsSync(p)) {
+        // Packaged copies can lose the executable bit; make it runnable on POSIX.
+        if (process.platform !== 'win32') {
+          try { require('node:fs').chmodSync(p, 0o755); } catch { /* best-effort */ }
+        }
+        return p;
+      }
+    } catch { /* skip */ }
   }
   return 'yt-dlp'; // assume on PATH
 }
