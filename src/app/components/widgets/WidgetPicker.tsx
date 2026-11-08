@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'motion/react';
-import { Check, Heart, Mic2, Music, Pause, Plus, Sparkles, X } from 'lucide-react';
+import { Check, Download, Heart, Mic2, Music, Pause, Plus, Sparkles, BarChart3, Zap, X } from 'lucide-react';
 import { useTheme } from '../../context/ThemeContext';
 import { WIDGET_REGISTRY } from './widgetRegistry';
 
@@ -14,9 +14,11 @@ const ICON_MAP = {
   'now-playing': Pause,
   recent: Music,
   'top-artists': Mic2,
-  mood: Sparkles,
+  mood: Zap,
   liked: Heart,
   curator: Sparkles,
+  downloads: Download,
+  stats: BarChart3,
 } as const;
 
 export function WidgetPicker({ isOpen, activeWidgetIds, onToggle, onClose }: WidgetPickerProps) {

@@ -2,10 +2,32 @@
 @import './tailwind.css';
 @import './theme.css';
 
+html {
+  /* Prevent the app content/sidebar from shifting sideways when the player or
+     async recommendation rows change the page's scrollbar presence. */
+  scrollbar-gutter: stable;
+}
+
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+.sidebar-brand-spin {
+  animation: sidebar-brand-rotate 8s linear infinite;
+}
+
+@keyframes sidebar-brand-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-brand-spin {
+    animation: none;
+  }
 }

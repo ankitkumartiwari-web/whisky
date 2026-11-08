@@ -1,4 +1,4 @@
-import { Check, Heart, Mic2, Music, Pause, Plus, Sparkles } from 'lucide-react';
+import { Check, Download, Heart, Mic2, Music, Pause, Plus, Sparkles, BarChart3, Zap } from 'lucide-react';
 import { WIDGET_REGISTRY } from './widgetRegistry';
 
 interface WidgetManagerPageProps {
@@ -10,9 +10,11 @@ const ICON_MAP = {
   'now-playing': Pause,
   recent: Music,
   'top-artists': Mic2,
-  mood: Sparkles,
+  mood: Zap,
   liked: Heart,
   curator: Sparkles,
+  downloads: Download,
+  stats: BarChart3,
 } as const;
 
 export function WidgetManagerPage({ activeWidgetIds, onToggle }: WidgetManagerPageProps) {

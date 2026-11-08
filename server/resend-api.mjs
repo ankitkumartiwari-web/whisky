@@ -8,6 +8,13 @@ import YTMusic from 'ytmusic-api';
 const ytmusic = new YTMusic();
 import { appendFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+// This file is ESM, but the yt-dlp helpers still call require(). Without the
+// shim every /api/audio-stream request throws "require is not defined",
+// forcing the player onto the YouTube iframe for every song.
+const require = createRequire(import.meta.url);
+const serverDir = path.dirname(fileURLToPath(import.meta.url));
 // --- YouTube Enrichment Layer for iTunes Results ---
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 if (!YOUTUBE_API_KEY) {
@@ -76,37 +83,39 @@ async function ensureYtMusicReady() {
   return ytmusicReadyPromise;
 }
 
-// Cache embeddability checks so we don't re-fetch the embed page for every search.
+// Cache embeddability checks so we don't re-hit the API for every search.
 const embeddableCache = new Map();
 async function isVideoEmbeddable(videoId) {
   if (!videoId) return false;
   const cached = embeddableCache.get(videoId);
   if (cached !== undefined) return cached;
-  try {
-    const res = await fetch(`https://www.youtube.com/embed/${videoId}`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      },
-    });
-    if (!res.ok) {
-      embeddableCache.set(videoId, false);
-      return false;
+  // The YouTube Data API's status.embeddable is exactly the flag the IFrame
+  // player enforces. (The old check scraped the /embed/ page for playabilityStatus,
+  // but YouTube stopped shipping that in the initial HTML, so every video came
+  // back "not embeddable" and /api/resolve-alt always returned null.)
+  if (YOUTUBE_API_KEY) {
+    try {
+      const res = await fetch(
+        `https://www.googleapis.com/youtube/v3/videos?part=status&id=${videoId}&key=${YOUTUBE_API_KEY}`,
+      );
+      const data = await res.json();
+      const items = data?.items;
+      if (Array.isArray(items)) {
+        // Empty items list = the video doesn't exist.
+        const embeddable = items.length > 0 && Boolean(items[0]?.status?.embeddable);
+        embeddableCache.set(videoId, embeddable);
+        return embeddable;
+      }
+      if (data?.error) {
+        console.warn('[EmbedCheck] API error:', data.error.errors?.[0]?.reason ?? data.error.message);
+      }
+    } catch (err) {
+      console.warn('[EmbedCheck] fetch failed:', err && err.message ? err.message : err);
     }
-    const body = await res.text();
-    // YouTube's embed page sets playabilityStatus.status to "OK" for embeddable videos
-    // and "UNPLAYABLE" / "ERROR" for non-embeddable. We also catch the common reason
-    // strings that show up for embed-disabled videos.
-    const okMatch = /"playabilityStatus"\s*:\s*\{\s*"status"\s*:\s*"OK"/.test(body);
-    const blocked =
-      /requested video does not allow it to be played in embedded players/i.test(body) ||
-      /Video unavailable/.test(body);
-    const ok = okMatch && !blocked;
-    embeddableCache.set(videoId, ok);
-    return ok;
-  } catch (err) {
-    // On a network error, optimistically allow it — better to try than to drop.
-    return true;
   }
+  // API unavailable (quota/key/network) — optimistically allow it. The player's
+  // own onError retry loop is the safety net.
+  return true;
 }
 
 async function searchYTMusicForSong(title, artist) {
@@ -2310,23 +2319,45 @@ app.get('/api/resolve-alt', async (req, res) => {
   const exclude = new Set(excludeRaw.split(',').map((s) => s.trim()).filter(Boolean));
   if (!title) return res.status(400).json({ error: 'title is required' });
   try {
-    await ensureYtMusicReady();
     const query = `${title} ${artist}`.trim();
-    // Pull more results than usual so we have something to try after a few failures.
-    const results = await ytmusic.searchSongs(query);
-    if (Array.isArray(results)) {
-      for (const candidate of results.slice(0, 15)) {
-        if (!candidate?.videoId) continue;
-        if (exclude.has(candidate.videoId)) continue;
-        if (!(await isVideoEmbeddable(candidate.videoId))) continue;
-        return res.json({ videoId: candidate.videoId, source: 'ytmusic' });
+    // Collect candidates from both sources first — a ytmusic outage used to skip
+    // the HTML fallback entirely (shared try/catch) and return nothing.
+    const candidates = [];
+    const seen = new Set();
+    const push = (videoId, source) => {
+      if (!videoId || exclude.has(videoId) || seen.has(videoId)) return;
+      seen.add(videoId);
+      candidates.push({ videoId, source });
+    };
+
+    try {
+      await ensureYtMusicReady();
+      const results = await ytmusic.searchSongs(query);
+      if (Array.isArray(results)) {
+        // Pull more results than usual so we have something to try after a few failures.
+        for (const candidate of results.slice(0, 15)) {
+          push(candidate?.videoId, 'ytmusic');
+        }
+      }
+    } catch (err) {
+      console.warn('[ResolveAlt] ytmusic search failed:', err && err.message ? err.message : err);
+    }
+
+    // Last-resort source, even though it sometimes surfaces non-embeddable music
+    // videos. Better than nothing.
+    push(await searchYouTubeHtmlForSong(title, artist), 'html');
+
+    // Prefer embeddable candidates so the iframe fallback also works.
+    for (const candidate of candidates) {
+      if (await isVideoEmbeddable(candidate.videoId)) {
+        return res.json({ videoId: candidate.videoId, source: candidate.source });
       }
     }
-    // Last-resort: HTML scraper, even though it sometimes returns non-embeddable
-    // music videos. Better than nothing.
-    const htmlVid = await searchYouTubeHtmlForSong(title, artist);
-    if (htmlVid && !exclude.has(htmlVid) && (await isVideoEmbeddable(htmlVid))) {
-      return res.json({ videoId: htmlVid, source: 'html' });
+    // Nothing embeddable — hand back an untried candidate anyway. yt-dlp extracts
+    // audio regardless of embed restrictions, so the direct-audio path plays it;
+    // if extraction fails the client's onError loop excludes it and retries.
+    if (candidates.length > 0) {
+      return res.json({ videoId: candidates[0].videoId, source: `${candidates[0].source}-any` });
     }
     // Always 200 — the client distinguishes "endpoint missing" from "no result" by
     // checking whether videoId is null. 404 here gets misread as a route bug.
@@ -2345,6 +2376,7 @@ function resolveYtDlpPath() {
   const candidates = [
     process.env.YTDLP_PATH,
     path.join(process.resourcesPath || '', 'yt-dlp.exe'),
+    path.join(serverDir, '..', 'build', 'yt-dlp.exe'),
     path.join(process.cwd(), 'build', 'yt-dlp.exe'),
     path.join(process.cwd(), 'yt-dlp.exe'),
   ].filter(Boolean);

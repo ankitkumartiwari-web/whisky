@@ -10,7 +10,7 @@ import { isSongSaved, removeSongOffline, saveSongOffline } from '../lib/offlineS
 interface SongCardProps {
   song: Song;
   onPlay?: (song: Song) => void;
-  onLike?: (songId: string) => void;
+  onLike?: (song: Song) => void;
   isLoading?: boolean;
 }
 
@@ -34,7 +34,7 @@ export function SongCard(props: SongCardProps) {
 
   const handleLike = (e: React.MouseEvent) => {
     e.stopPropagation();
-    onLike?.(song.id);
+    onLike?.(song);
   };
 
   const handleSaveOffline = async (e: React.MouseEvent) => {

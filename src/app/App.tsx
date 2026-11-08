@@ -5,11 +5,12 @@ import { ThemeProvider } from './context/ThemeContext';
 import { Sidebar } from './components/Sidebar';
 import { TopNavigation, type ContentLanguage } from './components/TopNavigation';
 import { SongCard } from './components/SongCard';
-import { PlaylistCard } from './components/PlaylistCard';
+import { UserPlaylistsView } from './components/UserPlaylistsView';
 import MusicPlayer from './components/MusicPlayer';
 import ReactPlayer from 'react-player';
 import { MoodView } from './components/MoodView';
 import { MultiUserSession } from './components/MultiUserSession';
+import { useCollabRoom } from './lib/useCollabRoom';
 import { AIAssistant } from './components/AIAssistant';
 import { SongDetailsPage } from './components/SongDetailsPage';
 import { CustomCursor } from './components/CustomCursor';
@@ -32,7 +33,6 @@ import { getArtistMetadata, getSongMetadata } from './data/catalogMetadata';
 import {
   Song,
   mockSongs,
-  mockPlaylists,
 } from './data/mockData';
 
 function getDisplayNameFromUser(user: User | null): string {
@@ -59,6 +59,7 @@ function clearRecoveryParamsFromUrl() {
 const STORAGE_KEYS = {
   activeMenuItem: 'whisky-active-menu-item',
   likedSongIds: 'whisky-liked-song-ids',
+  likedSongItems: 'whisky-liked-song-items',
   onboardingPrefs: 'whisky-onboarding-prefs',
   activeWidgets: 'whisky-active-widgets',
   contentLanguage: 'whisky-content-language',
@@ -129,6 +130,27 @@ function getStoredLikedSongIds(): Set<string> {
   }
 }
 
+// Full song snapshots for every liked track. Lives alongside the id set so songs
+// that only exist online (search results, AI recommendations, collab broadcasts)
+// can still be rendered and played from the Liked library after a reload.
+function getStoredLikedSongItems(): Record<string, Song> {
+  const raw = window.localStorage.getItem(STORAGE_KEYS.likedSongItems);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return {};
+    const entries: Record<string, Song> = {};
+    parsed.forEach((song) => {
+      if (song && typeof song.id === 'string' && typeof song.title === 'string') {
+        entries[song.id] = song as Song;
+      }
+    });
+    return entries;
+  } catch {
+    return {};
+  }
+}
+
 function getStoredRecentSongs(): Song[] {
   const raw = window.localStorage.getItem('whisky-recent-songs');
   if (!raw) return [];
@@ -146,6 +168,64 @@ function getStoredRecentSongs(): Song[] {
 
 const RECENT_SONGS_LIMIT = 60;
 
+const RECOMMENDATION_CACHE_KEY = 'whisky-recommendations-v2';
+const RECOMMENDATION_CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+interface RecommendationCacheEntry {
+  signature: string;
+  savedAt: number;
+  reason?: string;
+  songs: Song[];
+}
+
+function readRecommendationCache(signature: string): RecommendationCacheEntry | null {
+  try {
+    const raw = window.localStorage.getItem(RECOMMENDATION_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as RecommendationCacheEntry | null;
+    if (!parsed || parsed.signature !== signature) return null;
+    if (!Number.isFinite(parsed.savedAt) || Date.now() - parsed.savedAt > RECOMMENDATION_CACHE_MAX_AGE_MS) {
+      return null;
+    }
+    if (!Array.isArray(parsed.songs)) return null;
+    const songs = parsed.songs.filter(
+      (song): song is Song =>
+        Boolean(song) &&
+        typeof song.id === 'string' &&
+        typeof song.title === 'string' &&
+        typeof song.artist === 'string' &&
+        typeof song.coverUrl === 'string',
+    );
+    if (songs.length === 0) return null;
+    return {
+      ...parsed,
+      reason: typeof parsed.reason === 'string' ? parsed.reason : '',
+      songs,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeRecommendationCache(signature: string, songs: Song[], reason: string) {
+  if (songs.length === 0) return;
+  try {
+    const entry: RecommendationCacheEntry = { signature, savedAt: Date.now(), reason, songs };
+    window.localStorage.setItem(RECOMMENDATION_CACHE_KEY, JSON.stringify(entry));
+  } catch {
+    // Storage full or unavailable - recommendations still work, just uncached.
+  }
+}
+
+function buildRecommendationReason(profile: { topArtistLabel: string; topGenreLabel: string }): string {
+  const artist = profile.topArtistLabel.trim();
+  const genre = profile.topGenreLabel.trim();
+  if (artist && genre) return `Because you like ${artist} · More ${genre} picks`;
+  if (artist) return `Because you like ${artist}`;
+  if (genre) return `More ${genre} for you`;
+  return 'Tuned to your listening';
+}
+
 function pushRecentSong(list: Song[], song: Song): Song[] {
   const filtered = list.filter((entry) => entry.id !== song.id);
   return [song, ...filtered].slice(0, RECENT_SONGS_LIMIT);
@@ -161,7 +241,7 @@ function AppContent() {
   const [activeMenuItem, setActiveMenuItem] = useState(getStoredActiveMenuItem);
   const [currentSong, setCurrentSong] = useState<Song | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [, setCurrentTime] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
   const [currentSongIndex, setCurrentSongIndex] = useState(0);
   const [isAIAssistantOpen, setIsAIAssistantOpen] = useState(false);
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
@@ -181,13 +261,22 @@ function AppContent() {
     window.localStorage.setItem(STORAGE_KEYS.volume, String(volume));
   }, [volume]);
   const [repeatMode, setRepeatMode] = useState<'off' | 'one' | 'all'>('off');
+  const [isShuffle, setIsShuffle] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [libraryTab, setLibraryTab] = useState<'played' | 'liked'>(getStoredLibraryTab);
   const [likedSongIds, setLikedSongIds] = useState<Set<string>>(getStoredLikedSongIds);
+  const [likedSongItems, setLikedSongItems] = useState<Record<string, Song>>(getStoredLikedSongItems);
   const [recentlyPlayedSongs, setRecentlyPlayedSongs] = useState<Song[]>(getStoredRecentSongs);
   const recentlyPlayedIds = useMemo(() => recentlyPlayedSongs.map((song) => song.id), [recentlyPlayedSongs]);
+  const recentIdsRef = useRef<string[]>(recentlyPlayedIds);
+  recentIdsRef.current = recentlyPlayedIds;
+  const currentSongRef = useRef<Song | null>(currentSong);
+  currentSongRef.current = currentSong;
+  const likedSongIdsRef = useRef<Set<string>>(likedSongIds);
+  likedSongIdsRef.current = likedSongIds;
   const [aiRecommendedSongs, setAiRecommendedSongs] = useState<Song[]>([]);
   const [aiRecommendationError, setAiRecommendationError] = useState('');
+  const [aiRecommendationReason, setAiRecommendationReason] = useState('');
   const [isRecommendationLoading, setIsRecommendationLoading] = useState(false);
   const [aiRerankedSongIds, setAiRerankedSongIds] = useState<string[]>([]);
   const [onlineSearchSongs, setOnlineSearchSongs] = useState<Song[]>([]);
@@ -197,6 +286,17 @@ function AppContent() {
   const [onboardingPrefs, setOnboardingPrefs] = useState<OnboardingPreferences | null>(getStoredOnboardingPrefs);
   const [isOnboardingOpen, setIsOnboardingOpen] = useState(false);
   const [contentLanguage, setContentLanguage] = useState<ContentLanguage>(getStoredContentLanguage);
+
+  // Recommendations refetch only when taste settings change (or on app launch).
+  // Likes still feed the profile via likedSongIdsRef on the next fetch, but they
+  // intentionally do NOT retrigger it here: keying the signature on liked ids made
+  // every heart tap refire ~17 online searches and visibly "refresh" the Home row.
+  const recommendationSignature = useMemo(() => {
+    const prefs = onboardingPrefs
+      ? [onboardingPrefs.languages, onboardingPrefs.genres, onboardingPrefs.moods, onboardingPrefs.energy]
+      : null;
+    return JSON.stringify({ prefs });
+  }, [onboardingPrefs]);
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEYS.contentLanguage, contentLanguage);
@@ -227,8 +327,9 @@ function AppContent() {
     window.localStorage.setItem('whisky-mood-preselect', moodId);
   };
   const playerRef = useRef<any>(null);
-  const repeatOneUsedRef = useRef(false);
-  const songEndFiredRef = useRef<string | null>(null);
+  const playlistQueueRef = useRef<Song[]>([]);
+  const playlistQueueIndexRef = useRef(-1);
+  const playRequestIdRef = useRef(0);
   // Track videoIds we've already tried (and that errored) for the current song so we
   // can ask the server for alternates instead of reusing the same broken ID.
   const triedVideoIdsRef = useRef<Map<string, Set<string>>>(new Map());
@@ -243,7 +344,20 @@ function AppContent() {
   const uniqueSongsById = (songs: Song[]) => Array.from(new Map(songs.map((song) => [song.id, song] as const)).values());
 
   const allSongs = useMemo(() => applyLikedState(mockSongs), [likedSongIds]);
-  const recommendedSongsView = useMemo(() => uniqueSongsById(aiRecommendedSongs), [aiRecommendedSongs]);
+  const likedSongsView = useMemo<Song[]>(() => {
+    const byId = new Map<string, Song>();
+    mockSongs.forEach((song) => byId.set(song.id, song));
+    recentlyPlayedSongs.forEach((song) => byId.set(song.id, song));
+    Object.values(likedSongItems).forEach((song) => byId.set(song.id, song));
+    return [...likedSongIds]
+      .map((id) => byId.get(id))
+      .filter((song): song is Song => Boolean(song))
+      .map((song) => ({ ...song, isLiked: true }));
+  }, [likedSongIds, likedSongItems, recentlyPlayedSongs]);
+  const recommendedSongsView = useMemo(
+    () => uniqueSongsById(aiRecommendedSongs).map((song) => ({ ...song, isLiked: likedSongIds.has(song.id) })),
+    [aiRecommendedSongs, likedSongIds],
+  );
   const playedSongsView = useMemo(
     () => recentlyPlayedSongs.map((song) => ({ ...song, isLiked: likedSongIds.has(song.id) })),
     [recentlyPlayedSongs, likedSongIds],
@@ -251,8 +365,8 @@ function AppContent() {
   const lastSessionSongsView = useMemo(() => playedSongsView.slice(0, 6), [playedSongsView]);
 
   const candidatePool = useMemo(
-    () => uniqueSongsById([...allSongs, ...aiRecommendedSongs, ...onlineSearchSongs]),
-    [allSongs, aiRecommendedSongs, onlineSearchSongs],
+    () => uniqueSongsById([...allSongs, ...likedSongsView, ...aiRecommendedSongs, ...onlineSearchSongs]),
+    [allSongs, likedSongsView, aiRecommendedSongs, onlineSearchSongs],
   );
 
   const songDirectoryRef = useRef<Map<string, Song>>(new Map());
@@ -260,10 +374,6 @@ function AppContent() {
     candidatePool.forEach((song) => songDirectoryRef.current.set(song.id, song));
     if (currentSong) songDirectoryRef.current.set(currentSong.id, currentSong);
   }, [candidatePool, currentSong]);
-
-  useEffect(() => {
-    repeatOneUsedRef.current = false;
-  }, [currentSong?.id]);
 
   const pickSmartNextSong = (current: Song | null): Song | null => {
     if (!current) return null;
@@ -335,12 +445,16 @@ function AppContent() {
     return queue;
   }, [currentSong, candidatePool]);
 
-  const handlePlaySong = async (song: Song) => {
+  const handlePlaySong = async (song: Song, queue?: Song[], queueIndex = 0) => {
+    const requestId = ++playRequestIdRef.current;
     const playableSong = await resolvePlayableSong(song);
+    if (requestId !== playRequestIdRef.current) return;
     if (!playableSong) {
       setIsPlaying(false);
       return;
     }
+    playlistQueueRef.current = queue ?? [];
+    playlistQueueIndexRef.current = queue ? queueIndex : -1;
     setPlaybackNotice('');
     setCurrentSong(playableSong);
     setIsPlaying(true);
@@ -348,7 +462,6 @@ function AppContent() {
     setCurrentTime(0);
     const index = candidatePool.findIndex((s) => s.id === playableSong.id);
     setCurrentSongIndex(index !== -1 ? index : -1);
-    repeatOneUsedRef.current = false;
     setRecentlyPlayedSongs((prev) => pushRecentSong(prev, playableSong));
     void logRecommendationEvent({
       eventType: 'play',
@@ -372,8 +485,34 @@ function AppContent() {
   };
 
   const handleNext = async () => {
+    const playlistQueue = playlistQueueRef.current;
+    const nextQueueIndex = playlistQueueIndexRef.current + 1;
+    if (playlistQueue.length > 0) {
+      if (nextQueueIndex < playlistQueue.length) {
+        void handlePlaySong(playlistQueue[nextQueueIndex], playlistQueue, nextQueueIndex);
+        return;
+      }
+      if (repeatMode === 'all') {
+        void handlePlaySong(playlistQueue[0], playlistQueue, 0);
+      } else {
+        playlistQueueRef.current = [];
+        playlistQueueIndexRef.current = -1;
+        setIsPlaying(false);
+      }
+      return;
+    }
+
     const fallback = candidatePool[(currentSongIndex + 1) % Math.max(candidatePool.length, 1)] ?? null;
-    let nextSong: Song | null = pickSmartNextSong(currentSong) ?? fallback ?? null;
+    let nextSong: Song | null = null;
+
+    if (isShuffle) {
+      const shufflePool = candidatePool.filter((song) => song.id !== currentSong?.id);
+      if (shufflePool.length > 0) {
+        nextSong = shufflePool[Math.floor(Math.random() * shufflePool.length)];
+      }
+    }
+
+    nextSong = nextSong ?? pickSmartNextSong(currentSong) ?? fallback ?? null;
 
     if (!nextSong && currentSong?.artist) {
       const result = await searchSongsOnline(currentSong.artist, 6, currentSong.country?.toLowerCase().slice(0, 2) ?? '');
@@ -400,39 +539,44 @@ function AppContent() {
     setProgress(0);
     setCurrentTime(0);
     setPlaybackNotice('');
-    repeatOneUsedRef.current = false;
     setRecentlyPlayedSongs((prev) => pushRecentSong(prev, playableSong));
+  };
+
+  const restartCurrentTrack = () => {
+    setProgress(0);
+    setCurrentTime(0);
+    setPlaybackNotice('');
+
+    const audio = audioElRef.current;
+    if (directAudioUrl && audio) {
+      audio.currentTime = 0;
+      setIsPlaying(true);
+      audio.play().catch((error: unknown) => {
+        console.error('Failed to restart audio playback:', error);
+        setPlaybackNotice('Playback could not be restarted. Please try again.');
+        setIsPlaying(false);
+      });
+      return;
+    }
+
+    const player = playerRef.current;
+    if (player?.seekTo) {
+      player.seekTo(0, 'seconds');
+    } else if (typeof player?.currentTime === 'number') {
+      player.currentTime = 0;
+    }
+    setIsPlaying(false);
+    window.setTimeout(() => setIsPlaying(true), 50);
   };
 
   // For ReactPlayer onEnd
   const playNext = () => {
     if (!currentSong) return;
 
-    if (repeatMode === 'one' && !repeatOneUsedRef.current) {
-      repeatOneUsedRef.current = true;
-      setIsPlaying(true);
-      setProgress(0);
-      setCurrentTime(0);
-      const player = playerRef.current;
-      if (player?.seekTo) {
-        player.seekTo(0, 'seconds');
-      } else if (typeof player?.currentTime === 'number') {
-        player.currentTime = 0;
-      }
-      return;
-    }
-
-    if (repeatMode === 'all') {
-      setIsPlaying(true);
-      setProgress(0);
-      setCurrentTime(0);
-      setPlaybackNotice('');
-      const player = playerRef.current;
-      if (player?.seekTo) {
-        player.seekTo(0, 'seconds');
-      } else if (typeof player?.currentTime === 'number') {
-        player.currentTime = 0;
-      }
+    // "Repeat one" restarts the current track. "Repeat all" advances and wraps
+    // (handleNext re-queues from the start when the playlist queue is exhausted).
+    if (repeatMode === 'one') {
+      restartCurrentTrack();
       return;
     }
 
@@ -441,21 +585,12 @@ function AppContent() {
 
   const handleRepeatModeChange = () => {
     setRepeatMode((prev) => (prev === 'off' ? 'one' : prev === 'one' ? 'all' : 'off'));
-    repeatOneUsedRef.current = false;
   };
 
   const handlePlayerProgress = (seconds: number) => {
     setCurrentTime(seconds);
     if (currentSong?.duration) {
       setProgress(Math.min(100, (seconds / currentSong.duration) * 100));
-      if (
-        currentSong.duration > 0 &&
-        seconds >= currentSong.duration - 0.4 &&
-        songEndFiredRef.current !== currentSong.id
-      ) {
-        songEndFiredRef.current = currentSong.id;
-        playNext();
-      }
     } else {
       setProgress(0);
     }
@@ -507,7 +642,6 @@ function AppContent() {
         setProgress(0);
         setCurrentTime(0);
         setPlaybackNotice('');
-        repeatOneUsedRef.current = false;
         setRecentlyPlayedSongs((prev) => pushRecentSong(prev, playableSong));
       })();
       return;
@@ -528,18 +662,29 @@ function AppContent() {
       setProgress(0);
       setCurrentTime(0);
       setPlaybackNotice('');
-      repeatOneUsedRef.current = false;
+
     })();
   };
 
-  const handleLikeSong = (songId: string) => {
+  const handleLikeSong = (song: Song) => {
+    const songId = song.id;
     const nextLikedSet = new Set(likedSongIds);
-    nextLikedSet.has(songId) ? nextLikedSet.delete(songId) : nextLikedSet.add(songId);
+    const willLike = !nextLikedSet.has(songId);
+    if (willLike) nextLikedSet.add(songId);
+    else nextLikedSet.delete(songId);
     const nextLikedIds = [...nextLikedSet];
     setLikedSongIds(nextLikedSet);
+    // Persist the full song so online results (search / AI / collab) still show up
+    // in the Liked library after navigation and reloads.
+    setLikedSongItems((previous) => {
+      const next = { ...previous };
+      if (willLike) next[songId] = { ...song, isLiked: true };
+      else delete next[songId];
+      return next;
+    });
     setCurrentSong((previous) => {
       if (!previous || previous.id !== songId) return previous;
-      return { ...previous, isLiked: !previous.isLiked };
+      return { ...previous, isLiked: willLike };
     });
     void logRecommendationEvent({
       eventType: 'like',
@@ -550,7 +695,35 @@ function AppContent() {
     });
   };
 
-  const likedSongsView = allSongs.filter((song) => song.isLiked);
+  // The collab room lives at app level (not inside the collab page) so the
+  // realtime channel, broadcast toggle, and follow-along state all survive
+  // navigating to the library and back.
+  const collabRoom = useCollabRoom({
+    currentSongId: currentSong?.id ?? null,
+    currentSongTitle: currentSong?.title ?? null,
+    currentSongArtist: currentSong?.artist ?? null,
+    currentSongVideoId: currentSong?.videoId ?? null,
+    currentSongCoverUrl: currentSong?.coverUrl ?? null,
+    currentSongAlbum: currentSong?.album ?? null,
+    onRemoteSong: (remote) => {
+      // Synthesize a Song from the broadcast payload so playback can start
+      // without needing to re-search for the track locally.
+      const synthetic: Song = {
+        id: remote.songId || `remote-${remote.videoId}`,
+        title: remote.title,
+        artist: remote.artist,
+        album: remote.album || '',
+        coverUrl: remote.coverUrl || '',
+        duration: 0,
+        isLiked: likedSongIds.has(remote.songId),
+        videoId: remote.videoId,
+        genre: '',
+        releaseYear: undefined,
+        country: '',
+      };
+      void handlePlaySong(synthetic);
+    },
+  });
 
   const normalizedSearch = searchQuery.trim().toLowerCase();
 
@@ -561,17 +734,9 @@ function AppContent() {
     );
   };
 
-  const filterPlaylists = (playlists: typeof mockPlaylists) => {
-    if (!normalizedSearch) return playlists;
-    return playlists.filter((playlist) =>
-      `${playlist.name} ${playlist.description}`.toLowerCase().includes(normalizedSearch),
-    );
-  };
-
   const filteredRecentlyPlayed = filterSongs(lastSessionSongsView);
   const filteredLikedSongs = filterSongs(likedSongsView);
   const filteredAllSongs = filterSongs(allSongs);
-  const filteredAllPlaylists = filterPlaylists(mockPlaylists);
 
   const mergedSearchSongs = useMemo(() => {
     if (!normalizedSearch) return filteredAllSongs;
@@ -588,7 +753,9 @@ function AppContent() {
   }, [filteredAllSongs, onlineSearchSongs, normalizedSearch]);
 
   const searchSongsForView = useMemo(() => {
-    if (aiRerankedSongIds.length === 0) return mergedSearchSongs;
+    if (aiRerankedSongIds.length === 0) {
+      return mergedSearchSongs.map((song) => ({ ...song, isLiked: likedSongIds.has(song.id) }));
+    }
     const map = new Map(mergedSearchSongs.map((song) => [song.id, song]));
     const ranked: Song[] = [];
     aiRerankedSongIds.forEach((songId) => {
@@ -598,8 +765,9 @@ function AppContent() {
         map.delete(songId);
       }
     });
-    return Array.from(new Map([...ranked, ...Array.from(map.values())].map((song) => [song.id, song] as const)).values());
-  }, [aiRerankedSongIds, mergedSearchSongs]);
+    return Array.from(new Map([...ranked, ...Array.from(map.values())].map((song) => [song.id, song] as const)).values())
+      .map((song) => ({ ...song, isLiked: likedSongIds.has(song.id) }));
+  }, [aiRerankedSongIds, mergedSearchSongs, likedSongIds]);
 
   const containerVariants: Variants = {
     hidden: { opacity: 0 },
@@ -724,22 +892,45 @@ function AppContent() {
   };
 
   const resolvePlayableSong = async (song: Song): Promise<Song | null> => {
-    // The pre-flight embed check is no longer needed: yt-dlp extracts a direct audio
-    // URL for any videoId regardless of whether YouTube embed is allowed. We just
-    // verify the videoId looks well-formed and let the audio-stream effect handle
-    // the actual playback resolution.
-    if (!song.videoId || !isValidYouTubeVideoId(song.videoId)) {
-      setPlaybackNotice(
-        `"${song.title}" does not include a valid YouTube videoId yet, so playback is unavailable for this track.`,
-      );
-      return null;
+    // yt-dlp can extract a direct audio URL for any videoId regardless of embed
+    // restrictions, so we only need a well-formed ID here. Recommendation cards
+    // arrive without one (fast metadata-only prefetch), so resolve it on demand.
+    if (song.videoId && isValidYouTubeVideoId(song.videoId)) {
+      return song;
     }
-    return song;
+
+    try {
+      const params = new URLSearchParams({ title: song.title, artist: song.artist });
+      const response = await fetch(`/api/resolve-alt?${params.toString()}`);
+      const data = (await response.json().catch(() => null)) as { videoId?: string } | null;
+      const videoId = typeof data?.videoId === 'string' ? data.videoId : '';
+      if (videoId && isValidYouTubeVideoId(videoId)) {
+        const resolved = { ...song, videoId };
+        songDirectoryRef.current.set(resolved.id, resolved);
+        setAiRecommendedSongs((prev) =>
+          prev.some((entry) => entry.id === resolved.id)
+            ? prev.map((entry) => (entry.id === resolved.id ? resolved : entry))
+            : prev,
+        );
+        return resolved;
+      }
+    } catch {
+      // Fall through to the notice below.
+    }
+
+    setPlaybackNotice(
+      `"${song.title}" does not include a valid YouTube videoId yet, so playback is unavailable for this track.`,
+    );
+    return null;
   };
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEYS.likedSongIds, JSON.stringify([...likedSongIds]));
   }, [likedSongIds]);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.likedSongItems, JSON.stringify(Object.values(likedSongItems)));
+  }, [likedSongItems]);
 
   useEffect(() => {
     window.localStorage.setItem('whisky-recent-songs', JSON.stringify(recentlyPlayedSongs));
@@ -806,26 +997,34 @@ function AppContent() {
     if (!onboardingPrefs) {
       setAiRecommendedSongs([]);
       setAiRecommendationError('');
+      setAiRecommendationReason('');
       setIsRecommendationLoading(false);
       return;
     }
 
     let isMounted = true;
     let retryHandle: number | null = null;
-    setIsRecommendationLoading(true);
+    let initialHandle: number | null = null;
+
+    // Show the previous session's row instantly so the home page never opens empty.
+    const cached = readRecommendationCache(recommendationSignature);
+    if (cached) {
+      setAiRecommendedSongs(cached.songs);
+      setAiRecommendationReason(cached.reason ?? '');
+      setIsRecommendationLoading(false);
+    } else {
+      setIsRecommendationLoading(true);
+    }
     setAiRecommendationError('');
 
-    // In packaged builds the embedded API spawns slightly after window load, so the first
-    // recommendation pass can race ahead of it. Retry with backoff (1s, 2s, 4s, 8s, 16s)
-    // before surfacing an error so a cold start still produces recs without user action.
-    const RETRY_DELAYS = [1000, 2000, 4000, 8000, 16000];
+    const RETRY_DELAYS = [1200, 2500, 5000];
 
     const runRound = (attempt: number) => {
       const directory = songDirectoryRef.current;
-      const likedSongs = Array.from(likedSongIds)
+      const likedSongs = Array.from(likedSongIdsRef.current)
         .map((id) => directory.get(id))
         .filter((song): song is Song => Boolean(song));
-      const recentSongs = recentlyPlayedIds
+      const recentSongs = recentIdsRef.current
         .map((id) => directory.get(id))
         .filter((song): song is Song => Boolean(song));
 
@@ -833,10 +1032,8 @@ function AppContent() {
         prefs: onboardingPrefs,
         likedSongs,
         recentSongs,
-        currentSong,
+        currentSong: currentSongRef.current,
       });
-      // Use up to 10 seeds (was 6) for a bigger pool — combined with the YT Music
-      // source below we now have ~80 candidates to rank instead of ~18.
       const seeds = buildSeedQueries(profile).slice(0, 10);
       if (seeds.length === 0) {
         setAiRecommendedSongs([]);
@@ -846,79 +1043,79 @@ function AppContent() {
 
       const collected: Song[] = [];
       const seenIds = new Set<string>();
-      let firstShown = false;
 
       const addSongs = (songs: Song[]) => {
+        if (!isMounted) return;
         songs.forEach((song) => {
-          // De-dupe across both sources by videoId — iTunes IDs and YT Music IDs
-          // differ but the videoId is the canonical key for "same playable song".
+          if (!song || !song.id || !song.title) return;
+          // De-dupe across both sources by videoId - iTunes and YT Music use
+          // different IDs but the videoId is the canonical key for the same song.
           const key = song.videoId || song.id;
           if (seenIds.has(key)) return;
           seenIds.add(key);
           collected.push(song);
         });
-        const ranked = rankAndDiversify(collected, profile, 12);
-        if (ranked.length > 0) {
-          setAiRecommendedSongs(ranked);
-          setAiRecommendationError('');
-        }
-        if (!firstShown && ranked.length > 0) {
-          firstShown = true;
-          setIsRecommendationLoading(false);
-        }
       };
 
+      // iTunes gives us genre/year/country metadata. Skip videoId enrichment so
+      // startup stays fast; the player resolves IDs lazily when a card is opened.
       const itunesTasks = seeds.map(({ query, country }) =>
-        searchSongsOnline(query, 4, country)
-          .then((res) => { if (isMounted) addSongs(res.data ?? []); })
+        searchSongsOnline(query, 5, country, { enrichVideoIds: false })
+          .then((res) => addSongs(res.data ?? []))
           .catch(() => {}),
       );
 
-      // YT Music as second source — music-only results with built-in popularity
-      // signal. Combined with iTunes the engine has more variety to rank.
-      const ytmusicTasks = seeds.slice(0, 6).map(({ query }) =>
+      // YT Music is playable immediately and adds a popularity signal.
+      const ytmusicTasks = seeds.slice(0, 7).map(({ query }) =>
         fetch('/api/search/ytmusic', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query, limit: 6 }),
+          body: JSON.stringify({ query, limit: 8 }),
         })
           .then((r) => (r.ok ? r.json() : null))
           .then((data: { results?: Song[] } | null) => {
-            if (isMounted && data?.results) addSongs(data.results);
+            if (data?.results) addSongs(data.results);
           })
           .catch(() => {}),
       );
 
-      const tasks = [...itunesTasks, ...ytmusicTasks];
-
-      Promise.all(tasks).then(() => {
+      // Rank once, after every source settles. Setting state on each partial batch
+      // was what made the row visibly reshuffle while the app was opening.
+      Promise.allSettled([...itunesTasks, ...ytmusicTasks]).then(() => {
         if (!isMounted) return;
-        if (collected.length > 0) {
+        const ranked = rankAndDiversify(collected, profile, 12);
+        if (ranked.length > 0) {
+          const reason = buildRecommendationReason(profile);
+          setAiRecommendationReason(reason);
+          // If the row was hydrated from cache, keep it stable for this session and
+          // save the fresh batch for the next launch. Update immediately only on a
+          // first run or when the user's taste signature changed.
+          if (!cached) setAiRecommendedSongs(ranked);
+          writeRecommendationCache(recommendationSignature, ranked, reason);
+          setAiRecommendationError('');
           setIsRecommendationLoading(false);
           return;
         }
         const nextDelay = RETRY_DELAYS[attempt];
         if (nextDelay !== undefined) {
           retryHandle = window.setTimeout(() => runRound(attempt + 1), nextDelay);
-        } else {
+        } else if (!cached) {
           setIsRecommendationLoading(false);
           setAiRecommendationError('Could not find tracks for your preferences yet.');
         }
       });
     };
 
-    const initialHandle = window.setTimeout(() => runRound(0), 350);
+    initialHandle = window.setTimeout(() => runRound(0), 250);
 
     return () => {
       isMounted = false;
-      window.clearTimeout(initialHandle);
+      if (initialHandle !== null) window.clearTimeout(initialHandle);
       if (retryHandle !== null) window.clearTimeout(retryHandle);
     };
-    // currentSong is intentionally omitted from deps — refetching the home grid every
-    // time the user picks a song caused the visible flicker the user reported. The
-    // current song is read at runtime via songDirectoryRef so it still feeds the soft
-    // signal without retriggering this effect.
-  }, [onboardingPrefs, likedSongIds, recentlyPlayedIds]);
+    // Recent plays feed the profile through recentIdsRef, so playing a song no
+    // longer retriggers this effect (which used to shuffle the home row).
+  }, [onboardingPrefs, recommendationSignature]);
 
   const handleSignIn = async (email: string, password: string) => {
     if (!supabase) return { error: supabaseConfigError ?? 'Supabase is not configured.' };
@@ -989,11 +1186,18 @@ function AppContent() {
   };
 
   const renderSongsGrid = (songs: Song[], emptyMessage: string, isLoading = false) => {
+    // Cards fade in as they mount (with a small stagger) so async suggestions
+    // appear smoothly instead of popping in after the section has settled.
+    const reveal = (index: number) => ({
+      initial: { opacity: 0, y: 16 },
+      animate: { opacity: 1, y: 0 },
+      transition: { duration: 0.45, delay: Math.min(index * 0.05, 0.5), ease: 'easeOut' as const },
+    });
     if (isLoading) {
       return (
         <div className="grid grid-cols-6 gap-8">
-          {Array.from({ length: 6 }).map((_, idx) => (
-            <motion.div key={idx} variants={itemVariants}>
+          {Array.from({ length: 12 }).map((_, idx) => (
+            <motion.div key={idx} {...reveal(idx)}>
               <SongCard
                 song={{ id: `skeleton-${idx}`, title: '', artist: '', album: '', coverUrl: '', isLiked: false, duration: 0, videoId: '' }}
                 isLoading={true}
@@ -1004,31 +1208,22 @@ function AppContent() {
       );
     }
     if (songs.length === 0) {
-      return <p className="text-muted-foreground text-sm">{emptyMessage}</p>;
+      return (
+        <motion.p
+          className="text-muted-foreground text-sm"
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, ease: 'easeOut' }}
+        >
+          {emptyMessage}
+        </motion.p>
+      );
     }
     return (
       <div className="grid grid-cols-6 gap-8">
-        {songs.map((song) => (
-          <motion.div key={song.id} variants={itemVariants}>
+        {songs.map((song, index) => (
+          <motion.div key={song.id} {...reveal(index)}>
             <SongCard song={song} onPlay={handlePlaySong} onLike={handleLikeSong} />
-          </motion.div>
-        ))}
-      </div>
-    );
-  };
-
-  const renderPlaylistsGrid = (playlists: typeof mockPlaylists, emptyMessage: string) => {
-    if (playlists.length === 0) {
-      return <p className="text-muted-foreground text-sm">{emptyMessage}</p>;
-    }
-    return (
-      <div className="grid grid-cols-4 gap-10">
-        {playlists.map((playlist) => (
-          <motion.div key={playlist.id} variants={itemVariants}>
-            <PlaylistCard
-              playlist={playlist}
-              onPlay={() => console.log('Playing playlist:', playlist.name)}
-            />
           </motion.div>
         ))}
       </div>
@@ -1103,6 +1298,7 @@ function AppContent() {
           ref={audioElRef}
           src={directAudioUrl}
           preload="auto"
+          autoPlay={isPlaying}
           onTimeUpdate={(e) => {
             const dur = e.currentTarget.duration;
             const cur = e.currentTarget.currentTime;
@@ -1237,6 +1433,7 @@ function AppContent() {
           setSearchQuery('');
           void handlePlaySong(song);
         }}
+        recentSongs={recentlyPlayedSongs}
       />
 
       <main className="pt-40 pb-40 px-12 ml-20">
@@ -1273,6 +1470,11 @@ function AppContent() {
                 <motion.div className="mb-10" variants={itemVariants}>
                   <p className="text-xs text-muted-foreground mb-2 tracking-[0.2em] uppercase">For You</p>
                   <h2 className="text-4xl tracking-tight">Recommended Songs</h2>
+                  <div className="mt-2 min-h-[1.25rem]">
+                    {aiRecommendationReason ? (
+                      <p className="text-sm text-muted-foreground">{aiRecommendationReason}</p>
+                    ) : null}
+                  </div>
                   {aiRecommendationError && (
                     <p className="text-xs mt-2 text-amber-400">{aiRecommendationError}</p>
                   )}
@@ -1347,10 +1549,9 @@ function AppContent() {
 
           {activeMenuItem === 'playlists' && (
             <motion.section className="mb-20" variants={containerVariants} initial="hidden" animate="visible">
-              <motion.div className="mb-10" variants={itemVariants}>
-                <h2 className="text-4xl tracking-tight">All Playlists</h2>
+              <motion.div variants={itemVariants}>
+                <UserPlaylistsView onPlaySong={handlePlaySong} likedSongIds={likedSongIds} />
               </motion.div>
-              {renderPlaylistsGrid(filteredAllPlaylists, 'No playlists match your search.')}
             </motion.section>
           )}
 
@@ -1376,32 +1577,7 @@ function AppContent() {
                   <h2 className="text-4xl tracking-tight">Collaborative Listening</h2>
                 </div>
               </motion.div>
-              <MultiUserSession
-                currentSongId={currentSong?.id ?? null}
-                currentSongTitle={currentSong?.title ?? null}
-                currentSongArtist={currentSong?.artist ?? null}
-                currentSongVideoId={currentSong?.videoId ?? null}
-                currentSongCoverUrl={currentSong?.coverUrl ?? null}
-                currentSongAlbum={currentSong?.album ?? null}
-                onRemoteSong={(remote) => {
-                  // Synthesize a Song from the broadcast payload so playback can
-                  // start without needing to re-search for the track locally.
-                  const synthetic: Song = {
-                    id: remote.songId || `remote-${remote.videoId}`,
-                    title: remote.title,
-                    artist: remote.artist,
-                    album: remote.album || '',
-                    coverUrl: remote.coverUrl || '',
-                    duration: 0,
-                    isLiked: likedSongIds.has(remote.songId),
-                    videoId: remote.videoId,
-                    genre: '',
-                    releaseYear: undefined,
-                    country: '',
-                  };
-                  void handlePlaySong(synthetic);
-                }}
-              />
+              <MultiUserSession room={collabRoom} />
             </motion.section>
           )}
 
@@ -1462,7 +1638,10 @@ function AppContent() {
         onPrevious={handlePrevious}
         onShowLyrics={() => setIsLyricsOpen(true)}
         onRepeatModeChange={handleRepeatModeChange}
+        isShuffle={isShuffle}
+        onToggleShuffle={() => setIsShuffle((prev) => !prev)}
         onProgressChange={handleProgressChange}
+        onToggleLike={handleLikeSong}
       />
 
       <AIAssistant
@@ -1494,15 +1673,10 @@ function AppContent() {
         onClose={() => setIsLyricsOpen(false)}
         isPlaying={isPlaying}
         progress={progress}
+        playbackTime={currentTime}
+        audioRef={audioElRef}
         onPlayPause={handlePlayPause}
-        onToggleLike={(songId) => {
-          setLikedSongIds((prev) => {
-            const next = new Set(prev);
-            if (next.has(songId)) next.delete(songId);
-            else next.add(songId);
-            return next;
-          });
-        }}
+        onToggleLike={handleLikeSong}
       />
 
       <OnboardingModal

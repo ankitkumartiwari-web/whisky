@@ -9,7 +9,7 @@ import { searchSongsOnline } from '../lib/songSearchApi';
 interface MoodViewProps {
   preferredLanguages: string[];
   onPlaySong: (song: Song) => void;
-  onLikeSong: (songId: string) => void;
+  onLikeSong: (song: Song) => void;
   likedSongIds: Set<string>;
 }
 

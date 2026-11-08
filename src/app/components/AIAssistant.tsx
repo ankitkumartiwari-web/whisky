@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Languages, Lightbulb, ListMusic, Loader2, Play, Send, Sparkles, X } from 'lucide-react';
+import { Languages, Lightbulb, ListMusic, Loader2, Play, Send, Sparkles, X, TrendingUp, Heart, Clock, Users, BookOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import type { Song } from '../data/mockData';
 import { useTheme } from '../context/ThemeContext';
-import { chatWithCurator, type CuratorChatResult, type CuratorTrack } from '../lib/aiCuratorApi';
+import { chatWithCurator, type CuratorChatResult, type CuratorTrack, type Analysis, type SongOfTheDay, type RelatedArtist } from '../lib/aiCuratorApi';
 
 interface ChatMessage {
   id: string;
@@ -20,7 +20,7 @@ interface AIAssistantProps {
   likedSongs: Song[];
   recentSongs: Song[];
   preferredLanguages: string[];
-  onPlaySong: (song: Song) => void;
+  onPlaySong: (song: Song, queue?: Song[], queueIndex?: number) => void;
   onAddToLibrary?: (songs: Song[]) => void;
   contentLanguage: 'English' | 'Hindi';
   onContentLanguageChange: (next: 'English' | 'Hindi') => void;
@@ -79,18 +79,26 @@ export function AIAssistant({
     const prompts: string[] = [];
     if (contentLanguage === 'Hindi') {
       if (currentSong?.artist) prompts.push(`${currentSong.artist} के बारे में 3 रोचक तथ्य बताओ`);
-      if (currentSong?.title) prompts.push(`"${currentSong.title}" जैसे गाने सुझाओ`);
+      if (currentSong?.title) prompts.push(`\"${currentSong.title}\" जैसे गाने सुझाओ`);
       prompts.push('एक लेट-नाइट फोकस प्लेलिस्ट बनाओ');
       prompts.push('बॉलीवुड रोड-ट्रिप मिक्स तैयार करो');
+      // New Hindi prompts
+      if (currentSong?.artist) prompts.push(`${currentSong.artist} की संगीत शैली के बारे में बताओ`);
+      prompts.push(`\"${currentSong?.title || 'कोई गाना'}\" की कहानी सुनाओ`);
+      prompts.push('एक दिन के लिए प्लेलिस्ट बनाओ');
     } else {
       if (currentSong?.artist) prompts.push(`Tell me 3 facts about ${currentSong.artist}`);
-      if (currentSong?.title) prompts.push(`Songs that feel like "${currentSong.title}"`);
+      if (currentSong?.title) prompts.push(`Songs that feel like \"${currentSong.title}\"`);
       prompts.push('Make me a late-night focus playlist');
-      if (preferredLanguages[0] === 'Hindi') prompts.push('Curate a Bollywood road-trip mix');
-      if (preferredLanguages[0] === 'Punjabi') prompts.push('Punjabi gym energy mix');
-      if (preferredLanguages[0] === 'Korean') prompts.push('K-Pop comeback radar');
+      prompts.push('Curate a Bollywood road-trip mix');
+      // New English prompts
+      if (currentSong?.artist) prompts.push(`Analyze the musical style of ${currentSong.artist}`);
+      prompts.push('Create a workout motivation playlist');
+      prompts.push('Generate a study beats playlist');
+      prompts.push('Discover similar artists like ' + (currentSong?.artist || 'the current song'));
+      prompts.push('Find the perfect song for my mood today');
     }
-    return prompts.slice(0, 4);
+    return prompts.slice(0, 6);
   }, [currentSong, preferredLanguages, contentLanguage]);
 
   const send = async (raw: string) => {
@@ -142,7 +150,7 @@ export function AIAssistant({
 
   const playPlaylist = (tracks: CuratorTrack[]) => {
     if (tracks.length === 0) return;
-    onPlaySong(tracks[0]);
+    onPlaySong(tracks[0], tracks, 0);
   };
 
   const addPlaylistToLibrary = (tracks: CuratorTrack[]) => {
@@ -258,13 +266,139 @@ export function AIAssistant({
                         playlist={message.data.playlist}
                         contentLanguage={contentLanguage}
                         onPlayAll={() => playPlaylist(message.data!.playlist!.tracks)}
-                        onPlayTrack={(track) => onPlaySong(track)}
+                        onPlayTrack={(track, tracks, index) => onPlaySong(track, tracks, index)}
                         onAddToLibrary={
                           onAddToLibrary
                             ? () => addPlaylistToLibrary(message.data!.playlist!.tracks)
                             : undefined
                         }
                       />
+                    )}
+
+                    {/* Enhanced AI Content - Analysis, Wisdom, etc. */}
+                    {message.data?.analysis && (
+                      <div className="mt-4 space-y-3">
+                        <h4 className="px-1 text-[10px] uppercase tracking-[0.22em] text-blue-400/80">
+                          {t('Music Analysis', 'संगीत विश्लेषण')}
+                        </h4>
+                        <div className="flex gap-3 rounded-2xl border border-blue-400/20 bg-blue-400/5 px-4 py-3">
+                          <TrendingUp className="mt-0.5 h-4 w-4 flex-shrink-0 text-blue-400" />
+                          <div className="space-y-1">
+                            <p className="text-xs leading-relaxed text-foreground/90">
+                              <span className="font-semibold">{t('Trend:', 'ट्रेंड:')}</span> {message.data.analysis.trend}
+                            </p>
+                            <p className="text-xs leading-relaxed text-foreground/90">
+                              <span className="font-semibold">{t('Genres:', 'शैलियाँ:')}</span> {message.data.analysis.genre_mix.join(', ')}
+                            </p>
+                            <p className="text-xs leading-relaxed text-foreground/90">
+                              <span className="font-semibold">{t('Energy:', 'ऊर्जा:')}</span> {message.data.analysis.energy_profile}
+                            </p>
+                            <p className="text-xs leading-relaxed text-foreground/90">
+                              <span className="font-semibold">{t('Time:', 'समय:')}</span> {message.data.analysis.time_of_day}
+                            </p>
+                            <p className="text-xs leading-relaxed text-foreground/90">
+                              <span className="font-semibold">{t('Mood:', 'मूड:')}</span> {message.data.analysis.listening_mood}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {message.data?.wisdom && (
+                      <div className="mt-4 space-y-3">
+                        <h4 className="px-1 text-[10px] uppercase tracking-[0.22em] text-purple-400/80">
+                          {t('AI Wisdom', 'एआई ज्ञान')}
+                        </h4>
+                        <div className="flex gap-3 rounded-2xl border border-purple-400/20 bg-purple-400/5 px-4 py-3">
+                          <BookOpen className="mt-0.5 h-4 w-4 flex-shrink-0 text-purple-400" />
+                          <p className="text-xs leading-relaxed text-foreground/90 italic">
+                            {message.data.wisdom}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    {message.data?.songOfTheDay && (
+                      <div className="mt-4 space-y-3">
+                        <h4 className="px-1 text-[10px] uppercase tracking-[0.22em] text-green-400/80">
+                          {t('Song of the Day', 'आज का गाना')}
+                        </h4>
+                        <div className="flex gap-3 rounded-2xl border border-green-400/20 bg-green-400/5 px-4 py-3">
+                          <Heart className="mt-0.5 h-4 w-4 flex-shrink-0 text-green-400" />
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-semibold text-foreground/90 truncate">
+                              {message.data.songOfTheDay.id}
+                            </p>
+                            <p className="text-xs leading-relaxed text-foreground/80">
+                              {message.data.songOfTheDay.reason}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {message.data?.relatedArtists && message.data.relatedArtists.length > 0 && (
+                      <div className="mt-4 space-y-3">
+                        <h4 className="px-1 text-[10px] uppercase tracking-[0.22em] text-orange-400/80">
+                          {t('Related Artists', 'संबंधित कलाकार')}
+                        </h4>
+                        <div className="flex flex-wrap gap-2">
+                          {message.data.relatedArtists.map((artist, idx) => (
+                            <div
+                              key={idx}
+                              className="flex items-center gap-2 rounded-full border border-orange-400/30 bg-orange-400/10 px-3 py-1.5"
+                            >
+                              <Users className="h-3 w-3 text-orange-400" />
+                              <span className="text-xs text-foreground/90">{artist.name}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {message.data?.customActions && message.data.customActions.length > 0 && (
+                      <div className="mt-4 space-y-3">
+                        <h4 className="px-1 text-[10px] uppercase tracking-[0.22em] text-cyan-400/80">
+                          {t('Quick Actions', 'त्वरित कार्य')}
+                        </h4>
+                        <div className="flex gap-2">
+                          {message.data.customActions.map((action, idx) => (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => void send(action.action || action.label)}
+                              className="flex items-center gap-1.5 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1.5 text-xs text-cyan-400 hover:bg-cyan-400/20 transition-colors"
+                            >
+                              <span>{action.label}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {message.data?.promptAlignment && (
+                      <div className="mt-4 space-y-3">
+                        <h4 className="px-1 text-[10px] uppercase tracking-[0.22em] text-teal-400/80">
+                          {t('AI Response Quality', 'एआई प्रतिक्रिया गुणवत्ता')}
+                        </h4>
+                        <div className="flex gap-3 rounded-2xl border border-teal-400/20 bg-teal-400/5 px-4 py-3">
+                          <TrendingUp className="mt-0.5 h-4 w-4 flex-shrink-0 text-teal-400" />
+                          <div className="space-y-1">
+                            <p className="text-xs leading-relaxed text-foreground/90">
+                              <span className="font-semibold">{t('Intent Match:', 'इरादा मैच:')}</span> {message.data.promptAlignment.intentMatch}/10
+                            </p>
+                            <p className="text-xs leading-relaxed text-foreground/90">
+                              <span className="font-semibold">{t('Cultural Relevance:', 'सांस्कृतिक प्रासंगिकता:')}</span> {message.data.promptAlignment.culturalRelevance}/10
+                            </p>
+                            <p className="text-xs leading-relaxed text-foreground/90">
+                              <span className="font-semibold">{t('Personalization:', 'व्यक्तिगतीकरण:')}</span> {message.data.promptAlignment.personalizationScore}/10
+                            </p>
+                            <p className="text-xs leading-relaxed text-foreground/90">
+                              <span className="font-semibold">{t('Completeness:', 'पूर्णता:')}</span> {message.data.promptAlignment.completeness}/10
+                            </p>
+                          </div>
+                        </div>
+                      </div>
                     )}
                   </div>
                 </motion.div>
@@ -343,7 +477,7 @@ export function AIAssistant({
 interface PlaylistCardProps {
   playlist: { name: string; description: string; tracks: CuratorTrack[] };
   onPlayAll: () => void;
-  onPlayTrack: (track: CuratorTrack) => void;
+  onPlayTrack: (track: CuratorTrack, tracks: CuratorTrack[], index: number) => void;
   onAddToLibrary?: () => void;
   contentLanguage: 'English' | 'Hindi';
 }
@@ -378,7 +512,7 @@ function PlaylistCard({ playlist, onPlayAll, onPlayTrack, onAddToLibrary, conten
             </span>
             <button
               type="button"
-              onClick={() => onPlayTrack(track)}
+              onClick={() => onPlayTrack(track, playlist.tracks, idx)}
               className="hidden h-5 w-5 items-center justify-center rounded-full bg-foreground/90 text-background group-hover:flex"
               aria-label={`Play ${track.title}`}
             >

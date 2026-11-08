@@ -41,7 +41,7 @@
         ]
       },
       {
-        "from": ".env",
+        "from": ".env.example",
         "to": ".env"
       },
       {

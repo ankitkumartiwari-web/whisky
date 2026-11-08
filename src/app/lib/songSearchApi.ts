@@ -21,19 +21,35 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 const searchCache = new Map<string, CachedSearchEntry>();
 const inFlight = new Map<string, Promise<{ data?: Song[]; source?: string; error?: string }>>();
 
-export async function searchSongsOnline(query: string, limit = 12, country = ''): Promise<{
+export interface SearchSongsOptions {
+  /**
+   * When false, the server returns iTunes metadata without resolving a YouTube
+   * videoId for every track. This is much faster and avoids burning YouTube API
+   * quota on background recommendation prefetches; the player resolves the ID
+   * lazily on play.
+   */
+  enrichVideoIds?: boolean;
+}
+
+export async function searchSongsOnline(
+  query: string,
+  limit = 12,
+  country = '',
+  options: SearchSongsOptions = {},
+): Promise<{
   data?: Song[];
   source?: string;
   error?: string;
 }> {
-  const cacheKey = `${(country || '').toLowerCase()}|${query.trim().toLowerCase()}|${limit}`;
+  const enrichVideoIds = options.enrichVideoIds !== false;
+  const cacheKey = `${(country || '').toLowerCase()}|${query.trim().toLowerCase()}|${limit}|${enrichVideoIds ? 'playable' : 'fast'}`;
   const cached = searchCache.get(cacheKey);
   if (cached && cached.expiresAt > Date.now()) return cached.result;
   const inflight = inFlight.get(cacheKey);
   if (inflight) return inflight;
 
   const promise = (async () => {
-    const result = await runSearchRequest(query, limit, country);
+    const result = await runSearchRequest(query, limit, country, enrichVideoIds);
     searchCache.set(cacheKey, { expiresAt: Date.now() + CACHE_TTL_MS, result });
     inFlight.delete(cacheKey);
     return result;
@@ -42,7 +58,12 @@ export async function searchSongsOnline(query: string, limit = 12, country = '')
   return promise;
 }
 
-async function runSearchRequest(query: string, limit: number, country: string): Promise<{
+async function runSearchRequest(
+  query: string,
+  limit: number,
+  country: string,
+  enrichVideoIds: boolean,
+): Promise<{
   data?: Song[];
   source?: string;
   error?: string;
@@ -56,7 +77,7 @@ async function runSearchRequest(query: string, limit: number, country: string): 
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ query, limit, country }),
+        body: JSON.stringify({ query, limit, country, enrichVideoIds }),
       });
 
       const payload = (await response.json().catch(() => ({}))) as SearchSongsResponse;

@@ -12,7 +12,7 @@ import {
 } from '../lib/userPlaylistStore';
 
 interface UserPlaylistsViewProps {
-  onPlaySong: (song: Song) => void;
+  onPlaySong: (song: Song, queue?: Song[], queueIndex?: number) => void;
   likedSongIds: Set<string>;
 }
 
@@ -34,6 +34,9 @@ export function UserPlaylistsView({ onPlaySong }: UserPlaylistsViewProps) {
     () => playlists.find((p) => p.id === activeId) ?? null,
     [playlists, activeId],
   );
+  const activeSongs = active
+    ? active.songIds.map((id) => active.songs[id]).filter((song): song is Song => Boolean(song))
+    : [];
 
   const handleCreate = (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -49,9 +52,12 @@ export function UserPlaylistsView({ onPlaySong }: UserPlaylistsViewProps) {
     if (activeId === id) setActiveId(null);
   };
 
+  const getPlaylistSongs = (playlist: UserPlaylist) =>
+    playlist.songIds.map((id) => playlist.songs[id]).filter((song): song is Song => Boolean(song));
+
   const handlePlayAll = (playlist: UserPlaylist) => {
-    const first = playlist.songIds.map((id) => playlist.songs[id]).find(Boolean);
-    if (first) onPlaySong(first);
+    const songs = getPlaylistSongs(playlist);
+    if (songs.length > 0) onPlaySong(songs[0], songs, 0);
   };
 
   return (
@@ -183,12 +189,13 @@ export function UserPlaylistsView({ onPlaySong }: UserPlaylistsViewProps) {
                     {active.songIds.map((id, idx) => {
                       const song = active.songs[id];
                       if (!song) return null;
+                      const queueIndex = activeSongs.findIndex((entry) => entry.id === song.id);
                       return (
                         <li key={id} className="flex items-center gap-3 px-6 py-3 hover:bg-secondary/40 group">
                           <span className="w-6 text-right text-xs text-muted-foreground">{idx + 1}</span>
                           <button
                             type="button"
-                            onClick={() => onPlaySong(song)}
+                            onClick={() => onPlaySong(song, activeSongs, queueIndex)}
                             className="flex flex-1 items-center gap-3 text-left"
                           >
                             <img src={song.coverUrl} alt="" className="h-10 w-10 rounded-md object-cover" />

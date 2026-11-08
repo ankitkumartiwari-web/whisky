@@ -106,16 +106,12 @@ export function Sidebar({ activeItem, onItemClick, onAddWidget, onRemoveWidget, 
   const itemsById = useMemo(() => new Map(allItems.map((item) => [item.id, item])), [allItems]);
 
   return (
-    <div className="fixed left-0 top-0 bottom-0 w-20 bg-sidebar border-r border-border flex flex-col items-center py-8">
-      <motion.div
-        className="mb-12"
-        whileHover={{ rotate: 180 }}
-        transition={{ duration: 0.6, ease: 'easeInOut' }}
-      >
+    <div className="fixed left-0 top-0 bottom-0 z-50 w-20 h-screen bg-sidebar border-r border-border flex flex-col items-center py-8">
+      <div className="sidebar-brand-spin mb-12" aria-label="Whisky Music">
         <div className="relative">
           <Disc3 className="w-10 h-10 text-accent" />
         </div>
-      </motion.div>
+      </div>
 
       <nav className="flex-1 w-full overflow-y-auto px-2 custom-scrollbar">
         <Reorder.Group

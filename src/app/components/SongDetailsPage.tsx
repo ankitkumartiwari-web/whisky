@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { X, Heart, Share2, Plus, Play, Pause, Clock, Disc, Music2, Calendar, ChevronDown, ChevronUp, Check } from 'lucide-react';
 import { Song } from '../data/mockData';
 import { motion, AnimatePresence } from 'motion/react';
@@ -32,8 +32,10 @@ interface SongDetailsPageProps {
   isPlaying: boolean;
   progress: number;
   onPlayPause?: () => void;
-  onToggleLike?: (songId: string) => void;
+  onToggleLike?: (song: Song) => void;
+  playbackTime?: number;
   playerRef?: { current: any };
+  audioRef?: { current: HTMLAudioElement | null };
 }
 
 const getAccentColor = (songId: string): string => {
@@ -54,7 +56,9 @@ export function SongDetailsPage({
   progress,
   onPlayPause,
   onToggleLike,
+  playbackTime,
   playerRef,
+  audioRef,
 }: SongDetailsPageProps) {
   const [isLiked, setIsLiked] = useState(false);
   const [songMetadata, setSongMetadata] = useState<SongMetadata | null>(null);
@@ -150,38 +154,7 @@ export function SongDetailsPage({
     }
   };
 
-  // Read currentTime directly from the player via rAF — bypasses React state lag.
-  const [livePlayerTime, setLivePlayerTime] = useState(0);
-  useEffect(() => {
-    if (!isOpen) return;
-    let raf = 0;
-    const loop = () => {
-      const player = playerRef?.current;
-      let now = 0;
-      if (player) {
-        if (typeof player.getCurrentTime === 'function') {
-          try {
-            const value = player.getCurrentTime();
-            if (typeof value === 'number' && Number.isFinite(value)) now = value;
-          } catch {
-            // fall back below
-          }
-        }
-        if (now === 0 && typeof player.currentTime === 'number' && Number.isFinite(player.currentTime)) {
-          now = player.currentTime;
-        }
-      }
-      if (now === 0 && song?.duration) {
-        now = (progress / 100) * song.duration;
-      }
-      setLivePlayerTime(now);
-      raf = requestAnimationFrame(loop);
-    };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
-  }, [isOpen, playerRef, song?.duration, progress]);
-
-  const syncedLinesPrecomputed = (() => {
+  const syncedLinesPrecomputed = useMemo(() => {
     const raw = songMetadata?.syncedLyrics;
     if (!raw) return [] as Array<{ time: number; text: string }>;
     const lines: Array<{ time: number; text: string }> = [];
@@ -200,28 +173,70 @@ export function SongDetailsPage({
       });
     });
     return lines.sort((a, b) => a.time - b.time);
-  })();
-  const currentTimeSecPre = livePlayerTime;
-  const adjustedTimeSecPre = Math.max(0, currentTimeSecPre);
-  const activeLineIndex = (() => {
-    if (syncedLinesPrecomputed.length === 0) return -1;
-    if (adjustedTimeSecPre < syncedLinesPrecomputed[0].time) return -1;
-    let idx = 0;
-    for (let i = 0; i < syncedLinesPrecomputed.length; i += 1) {
-      if (syncedLinesPrecomputed[i].time <= adjustedTimeSecPre) idx = i;
-      else break;
-    }
-    return idx;
-  })();
+  }, [songMetadata?.syncedLyrics]);
+
+  const [activeLineIndex, setActiveLineIndex] = useState(-1);
+  const activeLineIndexRef = useRef(-1);
+
+  // Drive the highlighted line straight from the audio element every frame.
+  // Reading media.currentTime avoids the ~250ms lag of React state updates.
+  useEffect(() => {
+    if (!isOpen) return;
+    let raf = 0;
+    const lines = syncedLinesPrecomputed;
+
+    const readTime = () => {
+      const audio = audioRef?.current;
+      if (audio && Number.isFinite(audio.currentTime) && audio.currentTime >= 0) return audio.currentTime;
+      const player = playerRef?.current;
+      if (player) {
+        if (typeof player.getCurrentTime === 'function') {
+          try {
+            const value = player.getCurrentTime();
+            if (typeof value === 'number' && Number.isFinite(value)) return value;
+          } catch {
+            // fall back below
+          }
+        }
+        if (typeof player.currentTime === 'number' && Number.isFinite(player.currentTime)) return player.currentTime;
+      }
+      if (typeof playbackTime === 'number' && Number.isFinite(playbackTime) && playbackTime > 0) return playbackTime;
+      if (song?.duration) return (progress / 100) * song.duration;
+      return 0;
+    };
+
+    const indexFor = (time: number) => {
+      if (lines.length === 0 || time < lines[0].time) return -1;
+      let idx = 0;
+      for (let i = 0; i < lines.length; i += 1) {
+        if (lines[i].time <= time) idx = i;
+        else break;
+      }
+      return idx;
+    };
+
+    const loop = () => {
+      const idx = indexFor(readTime());
+      if (idx !== activeLineIndexRef.current) {
+        activeLineIndexRef.current = idx;
+        setActiveLineIndex(idx);
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [isOpen, syncedLinesPrecomputed, audioRef, playerRef, playbackTime, song?.duration, progress]);
+
+  useEffect(() => {
+    activeLineIndexRef.current = -1;
+    setActiveLineIndex(-1);
+  }, [song?.id]);
 
   useEffect(() => {
     if (activeLineIndex < 0) return;
     const node = activeLineRef.current;
     if (!node) return;
-    const id = window.setTimeout(() => {
-      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }, 60);
-    return () => window.clearTimeout(id);
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }, [activeLineIndex]);
 
   useEffect(() => {
@@ -311,7 +326,13 @@ export function SongDetailsPage({
     songMetadata?.genre || songMeta?.genre || song.genre || 'Unknown';
   const resolvedLanguage = (() => {
     const direct = songMetadata?.language || songMeta?.language || originMeta?.language;
+    const genreText = `${songMetadata?.genre ?? ''} ${songMeta?.genre ?? ''} ${song.genre ?? ''}`;
+    const scriptSample = `${songMetadata?.songDescription ?? ''} ${songMetadata?.syncedLyrics ?? ''} ${song.title ?? ''}`;
+    const hindiSignal =
+      /bollywood|hindi|indian|filmi|desi/i.test(genreText) || /[\u0900-\u097F]/.test(scriptSample);
+    if (hindiSignal && (!direct || /english|unknown/i.test(direct))) return 'Hindi / Indian';
     if (direct) return direct;
+
     const country = (song.country ?? '').toUpperCase();
     const map: Record<string, string> = {
       USA: 'English', GBR: 'English', AUS: 'English', CAN: 'English',
@@ -460,7 +481,7 @@ export function SongDetailsPage({
               <button
                 onClick={() => {
                   setIsLiked(!isLiked);
-                  onToggleLike?.(song.id);
+                  onToggleLike?.(song);
                 }}
                 className="w-9 h-9 rounded-full flex items-center justify-center transition-colors bg-slate-100 text-slate-600 dark:bg-white/5 dark:text-white/50"
                 style={{
@@ -813,7 +834,7 @@ export function SongDetailsPage({
                         <p
                           key={`${line.time}-${idx}`}
                           ref={isActive ? activeLineRef : undefined}
-                          className={`leading-relaxed transition-all duration-300 ${
+                          className={`leading-relaxed ${
                             isActive
                               ? 'text-2xl md:text-3xl font-semibold text-slate-950 dark:text-white'
                               : 'text-base md:text-lg text-slate-500 dark:text-white/60'

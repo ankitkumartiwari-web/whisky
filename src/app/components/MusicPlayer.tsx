@@ -8,6 +8,7 @@ import {
   Volume2,
   Heart,
   Maximize2,
+  Infinity,
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import { Song } from '../data/mockData';
@@ -27,8 +28,11 @@ interface MusicPlayerProps {
   onPrevious: () => void;
   onShowLyrics: () => void;
   onRepeatModeChange: () => void;
+  isShuffle?: boolean;
+  onToggleShuffle?: () => void;
   onProgressChange?: (progress: number) => void;
   onDiagnosticsChange?: (diagnostics: PlayerRuntimeDiagnostics) => void;
+  onToggleLike?: (song: Song) => void;
 }
 
 const MusicPlayer = (props: MusicPlayerProps) => {
@@ -45,9 +49,15 @@ const MusicPlayer = (props: MusicPlayerProps) => {
     onProgressChange,
     volume,
     onVolumeChange,
+    onToggleLike,
   } = props;
 
-  const [isShuffle, setIsShuffle] = useState(false);
+  const [localShuffle, setLocalShuffle] = useState(false);
+  const isShuffle = props.isShuffle ?? localShuffle;
+  const handleToggleShuffle = () => {
+    if (props.onToggleShuffle) props.onToggleShuffle();
+    else setLocalShuffle((prev) => !prev);
+  };
   const [isLiked, setIsLiked] = useState(false);
   const [isBuffering] = useState(false);
 
@@ -106,7 +116,10 @@ const MusicPlayer = (props: MusicPlayerProps) => {
                 <p className="text-xs text-white/60 truncate">{currentSong.artist}</p>
               </div>
               <button
-                onClick={() => setIsLiked(!isLiked)}
+                onClick={() => {
+                  setIsLiked(!isLiked);
+                  onToggleLike?.(currentSong);
+                }}
                 className={`transition-colors flex-shrink-0 ${
                   isLiked ? 'text-accent' : 'text-white/40 hover:text-white'
                 }`}
@@ -119,7 +132,9 @@ const MusicPlayer = (props: MusicPlayerProps) => {
             <div className="flex-1 flex flex-col items-center gap-2">
               <div className="flex items-center gap-6">
                 <button
-                  onClick={() => setIsShuffle(!isShuffle)}
+                  onClick={handleToggleShuffle}
+                  title={isShuffle ? 'Shuffle on' : 'Shuffle off'}
+                  aria-pressed={isShuffle}
                   className={`transition-colors ${
                     isShuffle ? 'text-accent' : 'text-white/60 hover:text-white'
                   }`}
@@ -165,33 +180,32 @@ const MusicPlayer = (props: MusicPlayerProps) => {
                   <SkipForward className="w-5 h-5 fill-current" />
                 </button>
 
-                <button
-                  onClick={onRepeatModeChange}
-                  title={
-                    repeatMode === 'one'
-                      ? 'Repeat one'
-                      : repeatMode === 'all'
-                        ? 'Repeat all'
-                        : 'Repeat off'
-                  }
-                  className={`transition-colors ${
-                    repeatMode !== 'off' ? 'text-accent' : 'text-white/60 hover:text-white'
-                  }`}
-                >
-                  <span className="relative inline-flex items-center justify-center w-6 h-6 overflow-visible">
-                    <Repeat className="w-5 h-5" />
-                    {repeatMode === 'one' && (
-                      <span className="absolute -top-2 -right-2 z-20 flex h-5 w-5 items-center justify-center rounded-full bg-black text-[11px] font-extrabold leading-none text-white border border-accent shadow-[0_0_0_2px_rgba(0,0,0,0.55)]">
-                        1
-                      </span>
-                    )}
-                    {repeatMode === 'all' && (
-                      <span className="absolute -top-2 -right-3 z-20 flex h-5 min-w-5 items-center justify-center rounded-full bg-black px-1 text-[11px] font-extrabold leading-none text-white border border-accent shadow-[0_0_0_2px_rgba(0,0,0,0.55)]">
-                        8
-                      </span>
-                    )}
-                  </span>
-                </button>
+                   <button
+                     onClick={onRepeatModeChange}
+                     title={
+                       repeatMode === 'one'
+                         ? 'Repeat one'
+                         : repeatMode === 'all'
+                           ? 'Repeat all (∞)'
+                           : 'Repeat off'
+                     }
+                     className={`transition-colors ${
+                       repeatMode !== 'off' ? 'text-accent' : 'text-white/60 hover:text-white'
+                     }`}
+                   >
+                     <span className="relative inline-flex items-center justify-center w-6 h-6 overflow-visible">
+                       {repeatMode === 'all' ? (
+                         <Infinity className="w-5 h-5" />
+                       ) : (
+                         <Repeat className="w-5 h-5" />
+                       )}
+                       {repeatMode === 'one' && (
+                         <span className="absolute -top-2 -right-2 z-20 flex h-5 min-w-5 items-center justify-center rounded-full bg-black px-1 text-[11px] font-extrabold leading-none text-white border border-accent shadow-[0_0_0_2px_rgba(0,0,0,0.55)]">
+                           1
+                         </span>
+                       )}
+                     </span>
+                   </button>
               </div>
 
               {/* Progress Slider */}
