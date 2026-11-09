@@ -61,8 +61,12 @@ interface UseCollabRoomOptions {
 }
 
 const ROOM_STORAGE_KEY = 'whisky-room-code';
-const SYNC_STORAGE_KEY = 'whisky-room-sync';
-const FOLLOW_STORAGE_KEY = 'whisky-room-follow';
+// v2 keys: the v1 keys were auto-written with `false` on first mount, so every
+// existing listener silently had "Broadcast my track" and "Listen along" turned
+// off — the room connected but nobody ever heard the host. The new keys only
+// record an explicit choice, and the default is ON.
+const SYNC_STORAGE_KEY = 'whisky-room-sync-v2';
+const FOLLOW_STORAGE_KEY = 'whisky-room-follow-v2';
 // After we play a song that arrived from someone else's broadcast, suppress
 // re-broadcasting that same track for a short window — otherwise two listeners
 // with "Broadcast my track" + "Listen along" enabled echo each other forever
@@ -87,12 +91,13 @@ function readStoredCode(): string {
   }
 }
 
-function readStoredFlag(key: string): boolean {
-  if (typeof window === 'undefined') return false;
+function readStoredFlag(key: string, defaultValue = true): boolean {
+  if (typeof window === 'undefined') return defaultValue;
   try {
-    return window.localStorage.getItem(key) === '1';
+    const stored = window.localStorage.getItem(key);
+    return stored === null ? defaultValue : stored === '1';
   } catch {
-    return false;
+    return defaultValue;
   }
 }
 
@@ -380,6 +385,9 @@ export function useCollabRoom({
     }
     setRemoteSong(null);
     echoRef.current = null;
+    // A host expects whatever they play to reach the room.
+    setIsSyncing(true);
+    setFollowAlongState(true);
     setIsJoined(true);
   };
 
@@ -400,6 +408,9 @@ export function useCollabRoom({
     setPendingCode('');
     setRemoteSong(null);
     echoRef.current = null;
+    // Joining someone's room means "play what they're playing" — without this
+    // the listener only saw the remote card and had to find and click Play.
+    setFollowAlongState(true);
     setIsJoined(true);
   };
 
