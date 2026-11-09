@@ -37,3 +37,6 @@ recommender_service/__pycache__/
 
 # Local Netlify folder
 .netlify
+
+# Generated runtime env for packaged builds
+build/runtime.env

@@ -1,4 +1,4 @@
-﻿
+
 import dotenv from 'dotenv';
 // In packaged builds main.cjs sets DOTENV_CONFIG_PATH to the .env shipped via extraResources;
 // in dev it falls back to dotenv's default cwd lookup.

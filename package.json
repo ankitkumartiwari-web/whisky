@@ -1,7 +1,7 @@
 {
   "name": "whisky-music-app",
   "private": true,
-  "version": "1.1.1",
+  "version": "1.1.2",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -13,9 +13,10 @@
     "electron:start": "electron .",
     "build:icon": "node scripts/build-icon.cjs",
     "build:server": "node scripts/bundle-server.cjs",
-    "dist": "node scripts/build-icon.cjs && node scripts/bundle-server.cjs && vite build && electron-builder",
-    "dist:win": "node scripts/build-icon.cjs && node scripts/bundle-server.cjs && vite build && electron-builder --win --x64",
-    "dist:mac": "node scripts/build-icon.cjs && node scripts/bundle-server.cjs && vite build && electron-builder --mac --universal",
+    "build:runtime-env": "node scripts/build-runtime-env.cjs",
+    "dist": "node scripts/build-icon.cjs && node scripts/bundle-server.cjs && node scripts/build-runtime-env.cjs && vite build && electron-builder",
+    "dist:win": "node scripts/build-icon.cjs && node scripts/bundle-server.cjs && node scripts/build-runtime-env.cjs && vite build && electron-builder --win --x64",
+    "dist:mac": "node scripts/build-icon.cjs && node scripts/bundle-server.cjs && node scripts/build-runtime-env.cjs && vite build && electron-builder --mac --universal",
     "release": "node scripts/release.cjs"
   },
   "build": {
@@ -41,7 +42,7 @@
         ]
       },
       {
-        "from": ".env.example",
+        "from": "build/runtime.env",
         "to": ".env"
       }
     ],
