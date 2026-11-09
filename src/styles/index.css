@@ -58,22 +58,22 @@ svg.lucide {
   stroke-linejoin: round;
 }
 
-.sidebar-brand-spin {
-  animation: sidebar-brand-rotate 18s linear infinite;
+.album-spin {
+  animation: album-spin 18s linear infinite;
 }
 
-.sidebar-brand-spin:hover {
+.album-spin-paused {
   animation-play-state: paused;
 }
 
-@keyframes sidebar-brand-rotate {
+@keyframes album-spin {
   to {
     transform: rotate(360deg);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sidebar-brand-spin {
+  .album-spin {
     animation: none;
   }
 }

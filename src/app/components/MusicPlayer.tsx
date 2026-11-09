@@ -97,7 +97,7 @@ const MusicPlayer = (props: MusicPlayerProps) => {
             <div className="flex items-center gap-4 w-80">
               <motion.button
                 onClick={onShowLyrics}
-                className="relative w-14 h-14 rounded-2xl overflow-hidden flex-shrink-0 group"
+                className="relative w-14 h-14 rounded-full overflow-hidden flex-shrink-0 group"
                 layoutId={`song-${currentSong.id}`}
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
@@ -105,7 +105,7 @@ const MusicPlayer = (props: MusicPlayerProps) => {
                 <img
                   src={currentSong.coverUrl}
                   alt={currentSong.title}
-                  className="w-full h-full object-cover"
+                  className={`w-full h-full object-cover album-spin ${isPlaying ? '' : 'album-spin-paused'}`}
                 />
                 <div className="absolute inset-0 bg-background/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                   <Maximize2 className="w-5 h-5 text-foreground" />

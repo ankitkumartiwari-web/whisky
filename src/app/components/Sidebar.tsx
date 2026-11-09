@@ -107,7 +107,7 @@ export function Sidebar({ activeItem, onItemClick, onAddWidget, onRemoveWidget, 
 
   return (
     <div className="fixed left-3 top-3 bottom-3 z-50 w-20 rounded-[2rem] border border-border/80 bg-sidebar/95 shadow-soft backdrop-blur-xl flex flex-col items-center py-7">
-      <div className="sidebar-brand-spin mb-10" aria-label="Whisky Music">
+      <div className="mb-10" aria-label="Whisky Music">
         <img
           src="/brand-mark.svg"
           alt=""
