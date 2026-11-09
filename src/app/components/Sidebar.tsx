@@ -5,11 +5,11 @@ import {
   ListMusic,
   Users,
   Music,
-  Disc3,
   Plus,
   Heart,
   Mic2,
   Pause,
+  Lightbulb,
   Sparkles,
   Download,
   BarChart3,
@@ -49,7 +49,7 @@ const WIDGET_ICON_BY_KEY: Record<string, LucideIcon> = {
   'top-artists': Mic2,
   mood: Sparkles,
   liked: Heart,
-  curator: Sparkles,
+    curator: Lightbulb,
   downloads: Download,
   stats: BarChart3,
 };
@@ -106,11 +106,14 @@ export function Sidebar({ activeItem, onItemClick, onAddWidget, onRemoveWidget, 
   const itemsById = useMemo(() => new Map(allItems.map((item) => [item.id, item])), [allItems]);
 
   return (
-    <div className="fixed left-0 top-0 bottom-0 z-50 w-20 h-screen bg-sidebar border-r border-border flex flex-col items-center py-8">
-      <div className="sidebar-brand-spin mb-12" aria-label="Whisky Music">
-        <div className="relative">
-          <Disc3 className="w-10 h-10 text-accent" />
-        </div>
+    <div className="fixed left-3 top-3 bottom-3 z-50 w-20 rounded-[2rem] border border-border/80 bg-sidebar/95 shadow-soft backdrop-blur-xl flex flex-col items-center py-7">
+      <div className="sidebar-brand-spin mb-10" aria-label="Whisky Music">
+        <img
+          src="/brand-mark.svg"
+          alt=""
+          className="h-11 w-11 rounded-[0.85rem] shadow-soft"
+          draggable={false}
+        />
       </div>
 
       <nav className="flex-1 w-full overflow-y-auto px-2 custom-scrollbar">
@@ -136,15 +139,17 @@ export function Sidebar({ activeItem, onItemClick, onAddWidget, onRemoveWidget, 
                   <button
                     type="button"
                     onClick={() => onItemClick(item.id)}
-                    className={`relative flex flex-col items-center gap-1 transition-colors ${
-                      isActive ? 'text-accent' : 'text-muted-foreground hover:text-foreground'
+                    className={`relative flex items-center justify-center rounded-2xl p-2.5 transition-all ${
+                      isActive
+                        ? 'bg-accent/15 text-accent shadow-soft'
+                        : 'text-muted-foreground hover:bg-secondary/65 hover:text-foreground'
                     }`}
                     title={item.label}
                   >
                     <Icon className="w-6 h-6" />
                     {isActive && (
                       <motion.div
-                        className="absolute -left-10 top-1/2 -translate-y-1/2 w-1 h-10 bg-accent rounded-full"
+                        className="absolute -left-4 top-1/2 -translate-y-1/2 w-1 h-9 bg-accent rounded-full"
                         layoutId="activeIndicator"
                         transition={{ type: 'spring', damping: 25, stiffness: 300 }}
                       />

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Languages, Lightbulb, ListMusic, Loader2, Play, Send, Sparkles, X, TrendingUp, Heart, Clock, Users, BookOpen } from 'lucide-react';
+import { Languages, Lightbulb, ListMusic, Loader2, Play, Send, X, TrendingUp, Heart, Clock, Users, BookOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import type { Song } from '../data/mockData';
 import { useTheme } from '../context/ThemeContext';
@@ -28,9 +28,9 @@ interface AIAssistantProps {
 
 const GREETING_TEXT = {
   English:
-    "Hey, I'm Whisky — your music curator. Ask me about an artist's story, a song's backstory, or tell me a vibe and I'll spin up a playlist.",
+    "Hey, I'm Whisky — your music maestro. Ask me about an artist's story, a song's backstory, or tell me a vibe and I'll spin up a playlist.",
   Hindi:
-    'नमस्ते, मैं Whisky हूँ — आपका म्यूज़िक क्यूरेटर। किसी कलाकार की कहानी पूछिए, किसी गाने का बैकस्टोरी जानिए, या एक vibe बताइए — मैं प्लेलिस्ट बना दूँगा।',
+    'नमस्ते, मैं Whisky हूँ — आपका म्यूज़िक मास्ट्रो। किसी कलाकार की कहानी पूछिए, किसी गाने का बैकस्टोरी जानिए, या एक vibe बताइए — मैं प्लेलिस्ट बना दूँगा।',
 } as const;
 
 export function AIAssistant({
@@ -178,11 +178,11 @@ export function AIAssistant({
             style={{ backgroundColor: sectionBg, borderBottom: `1px solid ${panelBorder}` }}
           >
             <div className="flex items-center gap-3">
-              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-accent/30 to-accent/5">
-                <Sparkles className="h-5 w-5 text-accent" />
+              <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-accent/30 to-accent/5 shadow-soft">
+                <img src="/brand-mark.svg" alt="" draggable={false} className="h-7 w-7 rounded-lg" />
               </div>
               <div>
-                <p className="text-xs uppercase tracking-[0.22em]" style={{ color: subtleText }}>{t('AI Curator', 'एआई क्यूरेटर')}</p>
+                <p className="text-xs uppercase tracking-[0.22em]" style={{ color: subtleText }}>{t('Maestro', 'मैस्ट्रो')}</p>
                 <h3 className="text-sm" style={{ color: panelText }}>Whisky</h3>
               </div>
             </div>
@@ -462,7 +462,7 @@ export function AIAssistant({
                 disabled={isThinking || !input.trim()}
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
-                className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--accent)] text-[#0A0A0A] transition-colors hover:bg-[var(--accent)] disabled:opacity-40"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-[var(--accent)] text-accent-foreground transition-colors hover:brightness-105 disabled:opacity-40"
               >
                 <Send className="h-4 w-4" />
               </motion.button>
@@ -499,7 +499,7 @@ function PlaylistCard({ playlist, onPlayAll, onPlayTrack, onAddToLibrary, conten
         <button
           type="button"
           onClick={onPlayAll}
-          className="flex flex-shrink-0 items-center gap-1.5 rounded-full bg-[var(--accent)] px-3 py-1.5 text-[11px] font-semibold text-[#0A0A0A] transition-colors hover:bg-[var(--accent)]"
+          className="flex flex-shrink-0 items-center gap-1.5 rounded-full bg-[var(--accent)] px-3 py-1.5 text-[11px] font-semibold text-accent-foreground transition-colors hover:brightness-105"
         >
           <Play className="h-3 w-3 fill-current" /> {lt('Play all', 'सभी चलाएँ')}
         </button>
@@ -531,7 +531,7 @@ function PlaylistCard({ playlist, onPlayAll, onPlayTrack, onAddToLibrary, conten
         ))}
       </ul>
       {onAddToLibrary && (
-        <div className="border-t border-white/10 px-4 py-2">
+        <div className="border-t border-border/70 px-4 py-2">
           <button
             type="button"
             onClick={onAddToLibrary}

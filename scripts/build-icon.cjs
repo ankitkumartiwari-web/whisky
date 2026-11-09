@@ -1,115 +1,140 @@
-/* Generate Whisky Music brand icon (amber disc) at multiple sizes and pack into ICO. */
+/* Generate the Whisky Music brand icon (soft dusk tile with peach + lavender rings). */
 const fs = require('node:fs');
 const path = require('node:path');
 const { PNG } = require('pngjs');
 const toIco = require('to-ico');
 
 const COLORS = {
-  bg: { r: 14, g: 11, b: 7, a: 255 }, // dark cigar #0E0B07
-  ringOuter: { r: 216, g: 163, b: 92, a: 255 }, // amber #D8A35C
-  ringInner: { r: 14, g: 11, b: 7, a: 255 },
-  hub: { r: 216, g: 163, b: 92, a: 255 },
-  notch: { r: 216, g: 163, b: 92, a: 255 },
+  bgTop: { r: 38, g: 32, b: 49, a: 255 }, // #262031
+  bgBottom: { r: 20, g: 17, b: 26, a: 255 }, // #14111A
+  peachLight: { r: 247, g: 203, b: 169, a: 255 }, // #F7CBA9
+  peachDeep: { r: 224, g: 154, b: 108, a: 255 }, // #E09A6C
+  lavender: { r: 156, g: 139, b: 212, a: 255 }, // #9C8BD4
+  cream: { r: 242, g: 235, b: 227, a: 255 }, // #F2EBE3
 };
 
-function blend(target, color, alpha) {
-  const a = Math.max(0, Math.min(1, alpha));
-  target.r = Math.round(target.r * (1 - a) + color.r * a);
-  target.g = Math.round(target.g * (1 - a) + color.g * a);
-  target.b = Math.round(target.b * (1 - a) + color.b * a);
-  target.a = 255;
-}
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
 
-function setPixel(png, x, y, color) {
-  if (x < 0 || y < 0 || x >= png.width || y >= png.height) return;
-  const idx = (png.width * y + x) << 2;
-  png.data[idx] = color.r;
-  png.data[idx + 1] = color.g;
-  png.data[idx + 2] = color.b;
-  png.data[idx + 3] = color.a ?? 255;
+function mix(a, b, t) {
+  return {
+    r: Math.round(a.r + (b.r - a.r) * t),
+    g: Math.round(a.g + (b.g - a.g) * t),
+    b: Math.round(a.b + (b.b - a.b) * t),
+    a: 255,
+  };
 }
 
 function blendPixel(png, x, y, color, alpha) {
   if (x < 0 || y < 0 || x >= png.width || y >= png.height) return;
+  const a = clamp01(alpha);
+  if (a <= 0) return;
   const idx = (png.width * y + x) << 2;
-  const current = {
-    r: png.data[idx],
-    g: png.data[idx + 1],
-    b: png.data[idx + 2],
-    a: png.data[idx + 3],
-  };
-  blend(current, color, alpha);
-  png.data[idx] = current.r;
-  png.data[idx + 1] = current.g;
-  png.data[idx + 2] = current.b;
-  png.data[idx + 3] = current.a;
+  png.data[idx] = Math.round(png.data[idx] * (1 - a) + color.r * a);
+  png.data[idx + 1] = Math.round(png.data[idx + 1] * (1 - a) + color.g * a);
+  png.data[idx + 2] = Math.round(png.data[idx + 2] * (1 - a) + color.b * a);
+}
+
+function ringAlpha(dist, radius, thickness) {
+  const half = thickness / 2;
+  return clamp01(half + 0.5 - Math.abs(dist - radius));
+}
+
+function capsuleAlpha(x, y, x1, y1, x2, y2, radius) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lenSq = dx * dx + dy * dy || 1;
+  const t = clamp01(((x - x1) * dx + (y - y1) * dy) / lenSq);
+  const px = x1 + dx * t;
+  const py = y1 + dy * t;
+  return clamp01(radius + 0.5 - Math.hypot(x - px, y - py));
 }
 
 function makeIcon(size) {
   const png = new PNG({ width: size, height: size });
   const cx = size / 2;
   const cy = size / 2;
-  const cornerRadius = size * 0.22;
+  const cornerRadius = size * 0.28125; // 18/64
 
-  const ringOuter = size * 0.42;
-  const ringInner = size * 0.30;
-  const hubRadius = size * 0.08;
-  const notchHalfWidth = size * 0.04;
-  const notchTopY = size * 0.14;
-  const notchBottomY = size * 0.30;
+  const ringRadius = size * (19 / 64);
+  const ringThickness = size * (4.5 / 64);
+  const innerRadius = size * (12.5 / 64);
+  const innerThickness = size * (2 / 64);
+  const hubRadius = size * (3.4 / 64);
+  const notchRadius = size * (1.5 / 64);
+
+  const glowX = size * 0.28;
+  const glowY = size * 0.2;
+  const glowR = size * 0.6;
+  const coolX = size * 0.9;
+  const coolY = size * 0.94;
+  const coolR = size * 0.5;
 
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
-      // Rounded-rect background mask with edge antialiasing
-      const dx = Math.max(cornerRadius - x, x - (size - 1 - cornerRadius), 0);
-      const dy = Math.max(cornerRadius - y, y - (size - 1 - cornerRadius), 0);
+      // Soft rounded-square mask with antialiased corners.
+      const dx = Math.max(cornerRadius - (x + 0.5), (x + 0.5) - (size - cornerRadius), 0);
+      const dy = Math.max(cornerRadius - (y + 0.5), (y + 0.5) - (size - cornerRadius), 0);
       const cornerDist = Math.sqrt(dx * dx + dy * dy);
-      const bgAlpha = cornerDist <= cornerRadius
+      const mask = cornerDist <= cornerRadius
         ? 1
-        : Math.max(0, Math.min(1, cornerRadius - cornerDist + 0.5));
-      if (bgAlpha <= 0) {
-        setPixel(png, x, y, { r: 0, g: 0, b: 0, a: 0 });
+        : clamp01(cornerRadius - cornerDist + 0.5);
+      const idx = (png.width * y + x) << 2;
+      if (mask <= 0) {
+        png.data[idx] = 0;
+        png.data[idx + 1] = 0;
+        png.data[idx + 2] = 0;
+        png.data[idx + 3] = 0;
         continue;
       }
-      // Start with bg
-      const px = { ...COLORS.bg, a: 255 };
-      setPixel(png, x, y, px);
-      if (bgAlpha < 1) {
-        // make corner transparent
-        png.data[(png.width * y + x) << 2 | 3] = Math.round(255 * bgAlpha);
+
+      // Base vertical/diagonal gradient.
+      const t = clamp01((x * 0.3 + y * 0.7) / Math.max(size - 1, 1));
+      const base = mix(COLORS.bgTop, COLORS.bgBottom, t);
+      png.data[idx] = base.r;
+      png.data[idx + 1] = base.g;
+      png.data[idx + 2] = base.b;
+      png.data[idx + 3] = Math.round(255 * mask);
+
+      // Warm glow in the upper-left.
+      const gd = Math.hypot(x - glowX, y - glowY) / glowR;
+      const glow = clamp01(1 - gd);
+      blendPixel(png, x, y, COLORS.peachLight, 0.28 * glow * glow);
+
+      // Cool lavender ambient in the lower-right.
+      const cd = Math.hypot(x - coolX, y - coolY) / coolR;
+      const cool = clamp01(1 - cd);
+      blendPixel(png, x, y, COLORS.lavender, 0.16 * cool * cool);
+
+      const dist = Math.hypot(x + 0.5 - cx, y + 0.5 - cy);
+
+      // Outer peach ring, warmed from top to bottom.
+      const outerA = ringAlpha(dist, ringRadius, ringThickness);
+      if (outerA > 0) {
+        const ringT = clamp01((y + 0.5 - (cy - ringRadius)) / (ringRadius * 2));
+        blendPixel(png, x, y, mix(COLORS.peachLight, COLORS.peachDeep, ringT), outerA);
       }
 
-      const dxRing = x - cx + 0.5;
-      const dyRing = y - cy + 0.5;
-      const dist = Math.sqrt(dxRing * dxRing + dyRing * dyRing);
+      // Thin lavender inner ring.
+      const innerA = ringAlpha(dist, innerRadius, innerThickness);
+      if (innerA > 0) blendPixel(png, x, y, COLORS.lavender, innerA * 0.62);
 
-      // Outer ring (annulus between ringInner and ringOuter)
-      if (dist <= ringOuter + 1 && dist >= ringInner - 1) {
-        const inEdge = Math.max(0, Math.min(1, ringOuter - dist + 0.5));
-        const outEdge = Math.max(0, Math.min(1, dist - ringInner + 0.5));
-        const ringAlpha = Math.min(inEdge, outEdge);
-        if (ringAlpha > 0) blendPixel(png, x, y, COLORS.ringOuter, ringAlpha);
-      }
-
-      // Center hub
+      // Cream hub.
       if (dist <= hubRadius + 1) {
-        const a = Math.max(0, Math.min(1, hubRadius - dist + 0.5));
-        if (a > 0) blendPixel(png, x, y, COLORS.hub, a);
+        const hubA = clamp01(hubRadius + 0.5 - dist);
+        if (hubA > 0) blendPixel(png, x, y, COLORS.cream, hubA);
       }
 
-      // Notch line at top: vertical bar
-      if (
-        x + 0.5 >= cx - notchHalfWidth &&
-        x + 0.5 <= cx + notchHalfWidth &&
-        y >= notchTopY &&
-        y <= notchBottomY
-      ) {
-        const nudge = Math.min(
-          1,
-          (notchHalfWidth - Math.abs(x + 0.5 - cx)) + 0.5,
-        );
-        blendPixel(png, x, y, COLORS.notch, Math.max(0, Math.min(1, nudge)));
-      }
+      // Soft rounded "spin" notch at the top.
+      const notchA = capsuleAlpha(
+        x + 0.5,
+        y + 0.5,
+        cx,
+        size * (13.2 / 64),
+        cx,
+        size * (17 / 64),
+        notchRadius,
+      );
+      if (notchA > 0) blendPixel(png, x, y, COLORS.peachLight, notchA);
     }
   }
 
@@ -123,9 +148,7 @@ async function main() {
   const sizes = [16, 24, 32, 48, 64, 128, 256];
   const buffers = sizes.map((size) => makeIcon(size));
 
-  // Save 256 as PNG for fallback / docs
   fs.writeFileSync(path.join(buildDir, 'icon.png'), buffers[buffers.length - 1]);
-  // 512 PNG for high-res
   fs.writeFileSync(path.join(buildDir, 'icon-512.png'), makeIcon(512));
 
   const ico = await toIco(buffers);

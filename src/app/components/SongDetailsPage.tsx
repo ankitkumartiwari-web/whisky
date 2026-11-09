@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { X, Heart, Share2, Plus, Play, Pause, Clock, Disc, Music2, Calendar, ChevronDown, ChevronUp, Check, Crosshair, RotateCcw } from 'lucide-react';
+import { X, Heart, Share2, Plus, Play, Pause, Clock, Disc, Music2, Calendar, ChevronDown, ChevronUp, Check, CopyX, Crosshair, RotateCcw } from 'lucide-react';
 import { Song } from '../data/mockData';
 import { motion, AnimatePresence } from 'motion/react';
 import { WaveformVisualizer } from './WaveformVisualizer';
 import { Skeleton } from './ui/skeleton';
+import { Slider } from './ui/slider';
+import { WindowControls } from './WindowControls';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
 import { getArtistMetadata, getOriginMetadata, getSongMetadata } from '../data/catalogMetadata';
 import { fetchSongMetadata, type SongMetadata } from '../lib/metadataApi';
@@ -24,6 +26,29 @@ import {
   type PlayerRuntimeDiagnostics,
 } from '../lib/playerDiagnostics';
 
+function resolveShareBaseUrl(): string | null {
+  const configured = (import.meta.env.VITE_PUBLIC_APP_URL as string | undefined)?.trim();
+  if (configured) return configured.replace(/\/+$/, '');
+  if (typeof window === 'undefined') return null;
+  const isDesktop = Boolean(window.whiskyDesktop);
+  const { protocol, hostname, origin } = window.location;
+  const isLocalHost = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])$/i.test(hostname);
+  if (!isDesktop && /^https?:$/.test(protocol) && !isLocalHost) return origin;
+  return null;
+}
+
+function buildSongShareUrl(song: Song): string {
+  const base = resolveShareBaseUrl();
+  if (base) {
+    const shareId = song.videoId || song.id;
+    return `${base}/?song=${encodeURIComponent(shareId)}`;
+  }
+  const youtubeUrl = getYouTubeWatchUrl(song.videoId);
+  if (youtubeUrl) return youtubeUrl;
+  const query = encodeURIComponent(`${song.title} ${song.artist}`.trim());
+  return `https://www.youtube.com/results?search_query=${query}`;
+}
+
 interface SongDetailsPageProps {
   song: Song | null;
   nextSongs: Song[];
@@ -32,6 +57,7 @@ interface SongDetailsPageProps {
   isPlaying: boolean;
   progress: number;
   onPlayPause?: () => void;
+  onProgressChange?: (progress: number) => void;
   onToggleLike?: (song: Song) => void;
   playbackTime?: number;
   playerRef?: { current: any };
@@ -86,6 +112,7 @@ export function SongDetailsPage({
   isPlaying,
   progress,
   onPlayPause,
+  onProgressChange,
   onToggleLike,
   playbackTime,
   playerRef,
@@ -109,7 +136,7 @@ export function SongDetailsPage({
   });
   const lyricsRef = useRef<HTMLDivElement>(null);
   const activeLineRef = useRef<HTMLParagraphElement | null>(null);
-  const [shareState, setShareState] = useState<'idle' | 'copied' | 'shared'>('idle');
+  const [shareState, setShareState] = useState<'idle' | 'copied' | 'shared' | 'failed'>('idle');
   const [isPlaylistMenuOpen, setIsPlaylistMenuOpen] = useState(false);
   const [playlists, setPlaylists] = useState<UserPlaylist[]>([]);
   const [containingPlaylistIds, setContainingPlaylistIds] = useState<Set<string>>(new Set());
@@ -149,40 +176,72 @@ export function SongDetailsPage({
 
   const handleShareSong = async () => {
     if (!song) return;
-    const youtubeUrl = song.videoId
-      ? `https://www.youtube.com/watch?v=${song.videoId}`
-      : '';
     const shareTitle = `${song.title} — ${song.artist}`;
     const shareText = `🎵 Listening to "${song.title}" by ${song.artist} on Whisky Music`;
-    const shareUrl = youtubeUrl || window.location.href;
+    const shareUrl = buildSongShareUrl(song);
+    const isDesktop = Boolean(window.whiskyDesktop);
 
-    if (typeof navigator.share === 'function') {
+    // The desktop app's native share sheet is unreliable; copy straight to the OS
+    // clipboard instead (the web build still gets the normal share sheet).
+    if (!isDesktop && typeof navigator.share === 'function') {
       try {
         await navigator.share({ title: shareTitle, text: shareText, url: shareUrl });
         setShareState('shared');
         window.setTimeout(() => setShareState('idle'), 1800);
         return;
       } catch (err) {
-        // User cancelled or share failed — fall through to clipboard.
         if ((err as Error)?.name === 'AbortError') return;
       }
     }
 
-    try {
-      await navigator.clipboard.writeText(`${shareText}\n${shareUrl}`);
-      setShareState('copied');
-      window.setTimeout(() => setShareState('idle'), 1800);
-    } catch {
-      // last resort: select-and-copy fallback
-      const ta = document.createElement('textarea');
-      ta.value = `${shareText}\n${shareUrl}`;
-      document.body.appendChild(ta);
-      ta.select();
-      try { document.execCommand('copy'); } catch { /* noop */ }
-      document.body.removeChild(ta);
-      setShareState('copied');
-      window.setTimeout(() => setShareState('idle'), 1800);
+    let copied = false;
+    const desktopClipboard = window.whiskyDesktop?.clipboard;
+    if (desktopClipboard?.writeText) {
+      try {
+        copied = await desktopClipboard.writeText(shareUrl);
+      } catch {
+        copied = false;
+      }
     }
+    if (!copied && typeof navigator.clipboard?.writeText === 'function') {
+      try {
+        await navigator.clipboard.writeText(shareUrl);
+        copied = true;
+      } catch {
+        copied = false;
+      }
+    }
+    if (!copied) {
+      // Last resort: an off-screen textarea keeps the URL copyable even when the
+      // async Clipboard API is blocked by the renderer's permission policy.
+      const ta = document.createElement('textarea');
+      ta.value = shareUrl;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.top = '-1000px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, shareUrl.length);
+      try {
+        copied = document.execCommand('copy');
+      } catch {
+        copied = false;
+      }
+      document.body.removeChild(ta);
+    }
+
+    if (!copied) {
+      setShareState('failed');
+      window.setTimeout(() => setShareState('idle'), 2400);
+      // Give the user a manual way out rather than pretending the copy worked.
+      window.prompt('Copy this link', shareUrl);
+      return;
+    }
+
+    setShareState('copied');
+    window.setTimeout(() => setShareState('idle'), 1800);
   };
 
   const syncedLinesPrecomputed = useMemo(() => {
@@ -383,8 +442,10 @@ export function SongDetailsPage({
   const lyricsContent = songLyrics;
   const isLyricsLoading = isMetadataLoading || (songLyrics === null && songMetadata === null);
 
-  const formatDuration = (s: number) =>
-    `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
+  const formatDuration = (s: number) => {
+    const total = Math.max(0, Math.floor(Number.isFinite(s) ? s : 0));
+    return `${Math.floor(total / 60)}:${(total % 60).toString().padStart(2, '0')}`;
+  };
 
   const originLabel = songMeta?.originType === 'movie' || originMeta?.type === 'movie' ? 'Movie' : 'Album';
   const artistGenres = artistMeta?.genres ?? (song.genre ? [song.genre] : []);
@@ -420,6 +481,10 @@ export function SongDetailsPage({
 
   const syncedLines = syncedLinesPrecomputed;
   const hasSyncedLyrics = syncedLines.length > 0;
+  const playedSeconds =
+    typeof playbackTime === 'number' && Number.isFinite(playbackTime) && playbackTime > 0
+      ? playbackTime
+      : (progress / 100) * (song.duration || 0);
   const sourceLabel = songMetadata?.source
     ? 'View source'
     : 'View source';
@@ -446,7 +511,7 @@ export function SongDetailsPage({
             exit={{ opacity: 0, y: 24 }}
             transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
           >
-            <div className="flex items-center justify-between px-8 py-4 flex-shrink-0 border-b border-slate-200/10 dark:border-white/10">
+            <div className="flex items-center justify-between px-8 py-4 flex-shrink-0 border-b border-slate-200/10 dark:border-border/80">
               <div className="flex items-center gap-4">
                 <Skeleton className="w-10 h-10 rounded-lg" />
                 <div className="space-y-2">
@@ -462,7 +527,7 @@ export function SongDetailsPage({
             </div>
 
             <div className="flex flex-1 min-h-0 overflow-hidden">
-              <div className="flex flex-col items-center justify-center gap-6 px-10 py-8 flex-shrink-0 border-r border-slate-200/70 bg-white/80 dark:bg-[#09090b] dark:border-white/10" style={{ width: 340 }}>
+              <div className="flex flex-col items-center justify-center gap-6 px-10 py-8 flex-shrink-0 border-r border-slate-200/70 bg-white/80 dark:bg-background dark:border-border/80" style={{ width: 340 }}>
                 <Skeleton className="w-52 h-52 rounded-2xl" />
                 <div className="text-center w-full space-y-2">
                   <Skeleton className="h-5 w-40 mx-auto" />
@@ -473,18 +538,18 @@ export function SongDetailsPage({
                 <Skeleton className="w-full h-16 rounded-xl" />
               </div>
 
-              <div className="flex flex-col gap-4 px-7 py-8 overflow-y-auto flex-shrink-0 border-r border-slate-200/70 dark:border-white/10" style={{ width: 340 }}>
+              <div className="flex flex-col gap-4 px-7 py-8 overflow-y-auto flex-shrink-0 border-r border-slate-200/70 dark:border-border/80" style={{ width: 340 }}>
                 <Skeleton className="h-3 w-20 mb-1" />
-                <div className="rounded-2xl overflow-hidden border border-slate-200/10 dark:border-white/10">
+                <div className="rounded-2xl overflow-hidden border border-slate-200/10 dark:border-border/80">
                   {Array.from({ length: 8 }).map((_, index) => (
-                    <div key={index} className="flex items-center justify-between px-4 py-2.5 border-b border-slate-200/70 dark:border-white/10 last:border-b-0">
+                    <div key={index} className="flex items-center justify-between px-4 py-2.5 border-b border-slate-200/70 dark:border-border/80 last:border-b-0">
                       <Skeleton className="h-4 w-20" />
                       <Skeleton className="h-4 w-28" />
                     </div>
                   ))}
                 </div>
                 <Skeleton className="h-3 w-20 mt-2" />
-                <div className="rounded-2xl p-4 space-y-3 bg-slate-50 border border-slate-200/70 dark:bg-white/5 dark:border-white/10">
+                <div className="rounded-2xl p-4 space-y-3 bg-slate-50 border border-slate-200/70 dark:bg-secondary/45 dark:border-border/80">
                   <Skeleton className="h-4 w-32" />
                   <Skeleton className="h-4 w-full" />
                   <Skeleton className="h-4 w-5/6" />
@@ -501,7 +566,7 @@ export function SongDetailsPage({
                   <Skeleton className="h-5 w-24" />
                   <Skeleton className="h-3 w-20" />
                 </div>
-                <div className="flex-1 rounded-2xl p-6 bg-white border border-slate-200/70 shadow-sm dark:bg-white/5 dark:border-white/10 space-y-4">
+                <div className="flex-1 rounded-2xl p-6 bg-white border border-slate-200/70 shadow-sm dark:bg-secondary/45 dark:border-border/80 space-y-4">
                   {Array.from({ length: 12 }).map((_, index) => (
                     <Skeleton key={index} className="h-4 w-full" />
                   ))}
@@ -524,12 +589,7 @@ export function SongDetailsPage({
           exit={{ opacity: 0, y: 24 }}
           transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
         >
-          {/* -- Top bar -----------------------------------------------
-              Right padding keeps the action buttons clear of the Windows
-              titleBarOverlay (min/max/close controls take ~138px on the right). */}
-          <div
-            className="flex items-center justify-between pl-8 pr-[160px] py-4 flex-shrink-0 border-b border-slate-200/10 dark:border-white/10"
-          >
+          <div className="app-region-drag flex items-center justify-between pl-8 pr-5 py-4 flex-shrink-0 border-b border-slate-200/10 dark:border-border/80">
             {/* Song identity */}
             <div className="flex items-center gap-4">
               <img
@@ -545,54 +605,69 @@ export function SongDetailsPage({
             </div>
 
             {/* Actions */}
-            <div className="flex items-center gap-2">
+            <div className="app-region-no-drag flex items-center gap-2">
               <button
+                type="button"
                 onClick={() => {
                   setIsLiked(!isLiked);
                   onToggleLike?.(song);
                 }}
-                className="w-9 h-9 rounded-full flex items-center justify-center transition-colors bg-slate-100 text-slate-600 dark:bg-white/5 dark:text-white/50"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary/55 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
                 style={{
                   background: isLiked ? `${accent}22` : undefined,
                   color: isLiked ? accent : undefined,
                 }}
+                title={isLiked ? 'Remove from Liked Songs' : 'Like this song'}
+                aria-label={isLiked ? 'Remove from Liked Songs' : 'Like this song'}
               >
-                <Heart className={`w-4 h-4 ${isLiked ? 'fill-current' : 'text-slate-500 dark:text-white/50'}`} />
+                <Heart className={`w-4 h-4 ${isLiked ? 'fill-current' : ''}`} />
               </button>
               <button
+                type="button"
                 onClick={handleShareSong}
-                className="relative w-9 h-9 rounded-full flex items-center justify-center transition-colors bg-slate-100 text-slate-600 dark:bg-white/5 dark:text-white/50 hover:bg-slate-200 dark:hover:bg-white/10"
-                title={shareState === 'copied' ? 'Link copied' : 'Share'}
+                className="relative flex h-9 w-9 items-center justify-center rounded-full bg-secondary/55 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                title={
+                  shareState === 'copied'
+                    ? 'Link copied'
+                    : shareState === 'failed'
+                      ? 'Copy failed'
+                      : 'Share'
+                }
+                aria-label="Share song"
               >
                 {shareState === 'copied' || shareState === 'shared' ? (
                   <Check className="w-4 h-4 text-emerald-500" />
+                ) : shareState === 'failed' ? (
+                  <CopyX className="w-4 h-4 text-rose-400" />
                 ) : (
                   <Share2 className="w-4 h-4" />
                 )}
-                {shareState === 'copied' && (
+                {(shareState === 'copied' || shareState === 'failed') && (
                   <span className="absolute -bottom-7 right-0 whitespace-nowrap rounded-md bg-slate-950 text-white text-[10px] px-2 py-1 dark:bg-white dark:text-slate-950">
-                    Link copied
+                    {shareState === 'copied' ? 'Link copied' : 'Copy failed'}
                   </span>
                 )}
               </button>
               <div className="relative">
                 <button
+                  type="button"
                   onClick={() => setIsPlaylistMenuOpen((v) => !v)}
-                  className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
+                  className={`flex h-9 w-9 items-center justify-center rounded-full transition-colors ${
                     inPlaylistCount > 0
                       ? 'bg-emerald-500/15 text-emerald-500'
-                      : 'bg-slate-100 text-slate-600 dark:bg-white/5 dark:text-white/50 hover:bg-slate-200 dark:hover:bg-white/10'
+                      : 'bg-secondary/55 text-muted-foreground hover:bg-secondary hover:text-foreground'
                   }`}
                   title={inPlaylistCount > 0 ? `In ${inPlaylistCount} playlist${inPlaylistCount === 1 ? '' : 's'}` : 'Add to playlist'}
+                  aria-label="Add to playlist"
                 >
                   {inPlaylistCount > 0 ? <Check className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
                 </button>
                 {isPlaylistMenuOpen && (
                   <div
-                    className="absolute right-0 mt-2 w-72 z-50 rounded-xl border border-slate-200 bg-white text-slate-950 shadow-2xl dark:border-white/10 dark:bg-[#16110a] dark:text-white"
+                    className="absolute right-0 mt-2 w-72 z-50 rounded-xl border border-slate-200 bg-white text-slate-950 shadow-2xl dark:border-border/80 dark:bg-popover dark:text-white"
                     onMouseLeave={() => setIsPlaylistMenuOpen(false)}
                   >
-                    <div className="px-3 py-2 border-b border-slate-200 dark:border-white/10">
+                    <div className="px-3 py-2 border-b border-slate-200 dark:border-border/80">
                       <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500 dark:text-white/50">
                         Add "{song.title}" to playlist
                       </p>
@@ -610,7 +685,7 @@ export function SongDetailsPage({
                               key={p.id}
                               type="button"
                               onClick={() => handleTogglePlaylistMembership(p.id)}
-                              className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-white/5"
+                              className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-card/50"
                             >
                               <div className="min-w-0 flex-1">
                                 <p className="truncate">{p.name}</p>
@@ -630,13 +705,13 @@ export function SongDetailsPage({
                     </div>
                     <form
                       onSubmit={handleCreatePlaylistWithSong}
-                      className="border-t border-slate-200 dark:border-white/10 p-3 flex items-center gap-2"
+                      className="border-t border-slate-200 dark:border-border/80 p-3 flex items-center gap-2"
                     >
                       <input
                         value={newPlaylistName}
                         onChange={(e) => setNewPlaylistName(e.target.value)}
                         placeholder="New playlist..."
-                        className="flex-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-950 placeholder:text-slate-400 focus:outline-none focus:border-accent dark:border-white/10 dark:bg-white/5 dark:text-white dark:placeholder:text-white/40"
+                        className="flex-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-950 placeholder:text-slate-400 focus:outline-none focus:border-accent dark:border-border/80 dark:bg-secondary/45 dark:text-white dark:placeholder:text-white/40"
                       />
                       <button
                         type="submit"
@@ -648,13 +723,17 @@ export function SongDetailsPage({
                   </div>
                 )}
               </div>
-              <div className="w-px h-6 bg-slate-300/40 dark:bg-white/10 mx-1" />
+              <div className="mx-1 h-6 w-px bg-border/70" />
               <button
+                type="button"
                 onClick={onClose}
-                className="w-9 h-9 rounded-full flex items-center justify-center transition-colors bg-slate-100 text-slate-600 dark:bg-white/5 dark:text-white/50"
+                className="flex h-9 w-9 items-center justify-center rounded-full bg-secondary/55 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                title="Close song details"
+                aria-label="Close song details"
               >
                 <X className="w-4 h-4" />
               </button>
+              <WindowControls />
             </div>
           </div>
 
@@ -663,7 +742,7 @@ export function SongDetailsPage({
 
             {/* Column 1 - Artwork + controls --------------------------- */}
             <div
-              className="flex flex-col items-center justify-center gap-6 px-10 py-8 flex-shrink-0 border-r border-slate-200/70 bg-white/80 dark:bg-[#09090b] dark:border-white/10"
+              className="flex flex-col items-center justify-center gap-6 px-10 py-8 flex-shrink-0 border-r border-slate-200/70 bg-white/80 dark:bg-background dark:border-border/80"
               style={{ width: 340 }}
             >
               {/* Artwork */}
@@ -715,7 +794,7 @@ export function SongDetailsPage({
               </div>
 
               {/* Playback status pill */}
-              <div className="w-full rounded-xl px-4 py-3 text-xs bg-slate-50/80 border border-slate-200/70 text-slate-700 dark:bg-white/5 dark:border-white/10 dark:text-white/70">
+              <div className="w-full rounded-xl px-4 py-3 text-xs bg-slate-50/80 border border-slate-200/70 text-slate-700 dark:bg-secondary/45 dark:border-border/80 dark:text-white/70">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-slate-500 dark:text-white/40 uppercase tracking-widest text-[10px]">Playback</span>
                   <span
@@ -735,15 +814,15 @@ export function SongDetailsPage({
             </div>
 
             {/* Column 2 - Metadata ----------------------------------- */}
-            <div className="flex flex-col gap-4 px-7 py-8 overflow-y-auto flex-shrink-0 border-r border-slate-200/70 dark:border-white/10" style={{ width: 340 }}>
+            <div className="flex flex-col gap-4 px-7 py-8 overflow-y-auto flex-shrink-0 border-r border-slate-200/70 dark:border-border/80" style={{ width: 340 }}>
               {/* Song details table */}
               <section>
                 <h2 className="text-[10px] uppercase tracking-[0.28em] text-slate-500 dark:text-white/40 mb-3">Details</h2>
-                <div className="rounded-2xl overflow-hidden border border-slate-200/10 dark:border-white/10">
+                <div className="rounded-2xl overflow-hidden border border-slate-200/10 dark:border-border/80">
                   {metaRows.map(([label, value], i) => (
                     <div
                       key={label}
-                      className={`flex items-center justify-between px-4 py-2.5 text-sm ${i % 2 === 0 ? 'bg-slate-50 dark:bg-white/5' : 'bg-transparent'} ${i < metaRows.length - 1 ? 'border-b border-slate-200/70 dark:border-white/10' : ''}`}
+                      className={`flex items-center justify-between px-4 py-2.5 text-sm ${i % 2 === 0 ? 'bg-slate-50 dark:bg-secondary/45' : 'bg-transparent'} ${i < metaRows.length - 1 ? 'border-b border-slate-200/70 dark:border-border/80' : ''}`}
                     >
                       <span className="text-slate-500 dark:text-white/70">{label}</span>
                       <span className="text-slate-950 dark:text-white font-medium truncate ml-4 text-right">{value}</span>
@@ -755,7 +834,7 @@ export function SongDetailsPage({
               {/* Artist bio */}
               <section>
                 <h2 className="text-[10px] uppercase tracking-[0.28em] text-slate-500 dark:text-white/40 mb-3">Artist</h2>
-                <div className="rounded-2xl p-4 bg-slate-50 border border-slate-200/70 text-slate-700 dark:bg-white/5 dark:border-white/10 dark:text-white/70">
+                <div className="rounded-2xl p-4 bg-slate-50 border border-slate-200/70 text-slate-700 dark:bg-secondary/45 dark:border-border/80 dark:text-white/70">
                   <p className="text-slate-700 dark:text-white/70 text-sm leading-relaxed">
                     {resolvedArtistBio}
                   </p>
@@ -779,13 +858,13 @@ export function SongDetailsPage({
               {(moodTags.length > 0 || activityTags.length > 0) && (
                 <section>
                   <h2 className="text-[10px] uppercase tracking-[0.28em] text-slate-500 dark:text-white/40 mb-3">Context</h2>
-                  <div className="rounded-2xl p-4 space-y-3 bg-slate-50 border border-slate-200/70 text-slate-700 dark:bg-white/5 dark:border-white/10 dark:text-white/70">
+                  <div className="rounded-2xl p-4 space-y-3 bg-slate-50 border border-slate-200/70 text-slate-700 dark:bg-secondary/45 dark:border-border/80 dark:text-white/70">
                     {moodTags.length > 0 && (
                       <div>
                         <p className="text-[10px] uppercase tracking-widest text-slate-500 dark:text-white/40 mb-2">Mood</p>
                         <div className="flex flex-wrap gap-1.5">
                           {moodTags.map((m) => (
-                            <span key={m} className="text-[11px] px-2.5 py-0.5 rounded-full bg-slate-100/80 text-slate-700 dark:bg-white/10 dark:text-white/70">
+                            <span key={m} className="text-[11px] px-2.5 py-0.5 rounded-full bg-slate-100/80 text-slate-700 dark:bg-secondary/60 dark:text-white/70">
                               {m}
                             </span>
                           ))}
@@ -797,7 +876,7 @@ export function SongDetailsPage({
                         <p className="text-[10px] uppercase tracking-widest text-slate-500 dark:text-white/40 mb-2">Activities</p>
                         <div className="flex flex-wrap gap-1.5">
                           {activityTags.map((a) => (
-                            <span key={a} className="text-[11px] px-2.5 py-0.5 rounded-full bg-slate-100/80 text-slate-700 dark:bg-white/10 dark:text-white/70">
+                            <span key={a} className="text-[11px] px-2.5 py-0.5 rounded-full bg-slate-100/80 text-slate-700 dark:bg-secondary/60 dark:text-white/70">
                               {a}
                             </span>
                           ))}
@@ -819,6 +898,25 @@ export function SongDetailsPage({
                   {sourceLabel}
                 </a>
               )}
+
+              {/* Playback slider */}
+              <section className="mt-6 rounded-2xl border border-slate-200/70 bg-slate-50 p-4 dark:border-border/80 dark:bg-secondary/45">
+                <div className="mb-2 flex items-center justify-between">
+                  <h2 className="text-[10px] uppercase tracking-[0.28em] text-slate-500 dark:text-white/40">
+                    Playback
+                  </h2>
+                  <span className="text-[11px] tabular-nums text-slate-600 dark:text-white/60">
+                    {formatDuration(playedSeconds)} / {formatDuration(song.duration || 0)}
+                  </span>
+                </div>
+                <Slider
+                  value={[Math.max(0, Math.min(100, progress))]}
+                  onValueChange={(value) => onProgressChange?.(value[0])}
+                  max={100}
+                  step={0.1}
+                  className="w-full"
+                />
+              </section>
             </div>
 
             {/* Column 3 - Lyrics ------------------------------------ */}
@@ -830,7 +928,7 @@ export function SongDetailsPage({
                 </span>
               </div>
               {hasSyncedLyrics && (
-                <div className="mb-4 flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-200/70 bg-white/80 px-3 py-2 text-xs shadow-sm dark:border-white/10 dark:bg-white/5">
+                <div className="mb-4 flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-200/70 bg-white/80 px-3 py-2 text-xs shadow-sm dark:border-border/80 dark:bg-secondary/45">
                   <span className="mr-1 text-[10px] uppercase tracking-[0.18em] text-slate-500 dark:text-white/40">
                     Sync
                   </span>
@@ -842,7 +940,7 @@ export function SongDetailsPage({
                       key={label}
                       type="button"
                       onClick={() => nudgeLyricsOffset(delta)}
-                      className="rounded-full border border-slate-200/70 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 transition-colors hover:bg-slate-100 dark:border-white/10 dark:bg-white/5 dark:text-white/70 dark:hover:bg-white/10"
+                      className="rounded-full border border-slate-200/70 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 transition-colors hover:bg-slate-100 dark:border-border/80 dark:bg-secondary/45 dark:text-white/70 dark:hover:bg-secondary/65"
                     >
                       {label}
                     </button>
@@ -859,7 +957,7 @@ export function SongDetailsPage({
                       key={label}
                       type="button"
                       onClick={() => nudgeLyricsOffset(delta)}
-                      className="rounded-full border border-slate-200/70 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 transition-colors hover:bg-slate-100 dark:border-white/10 dark:bg-white/5 dark:text-white/70 dark:hover:bg-white/10"
+                      className="rounded-full border border-slate-200/70 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600 transition-colors hover:bg-slate-100 dark:border-border/80 dark:bg-secondary/45 dark:text-white/70 dark:hover:bg-secondary/65"
                     >
                       {label}
                     </button>
@@ -878,7 +976,7 @@ export function SongDetailsPage({
                       type="button"
                       onClick={resetLyricsOffset}
                       title="Reset sync offset"
-                      className="inline-flex items-center gap-1 rounded-full border border-slate-200/70 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-500 transition-colors hover:bg-slate-100 dark:border-white/10 dark:bg-white/5 dark:text-white/60 dark:hover:bg-white/10"
+                      className="inline-flex items-center gap-1 rounded-full border border-slate-200/70 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-500 transition-colors hover:bg-slate-100 dark:border-border/80 dark:bg-secondary/45 dark:text-white/60 dark:hover:bg-secondary/65"
                     >
                       <RotateCcw className="h-3 w-3" />
                       Reset
@@ -887,14 +985,14 @@ export function SongDetailsPage({
                 </div>
               )}
               {nextSongs.length > 0 && (
-                <Collapsible defaultOpen={false} className="mb-5 rounded-2xl border border-slate-200/70 bg-white/80 shadow-sm overflow-hidden dark:border-white/10 dark:bg-white/5">
+                <Collapsible defaultOpen={false} className="mb-5 rounded-2xl border border-slate-200/70 bg-white/80 shadow-sm overflow-hidden dark:border-border/80 dark:bg-secondary/45">
                   <CollapsibleTrigger asChild>
                     <button className="group w-full px-4 py-3 text-left">
                       <div className="flex items-center justify-between gap-3">
                         <p className="text-[10px] uppercase tracking-[0.28em] text-slate-500 dark:text-white/40">
                           Next in Queue
                         </p>
-                        <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200/70 bg-white text-slate-700 dark:border-white/10 dark:bg-white/5 dark:text-white/70">
+                        <span className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-200/70 bg-white text-slate-700 dark:border-border/80 dark:bg-secondary/45 dark:text-white/70">
                           <ChevronDown className="h-4 w-4 group-data-[state=open]:hidden" />
                           <ChevronUp className="hidden h-4 w-4 group-data-[state=open]:block" />
                         </span>
@@ -918,7 +1016,7 @@ export function SongDetailsPage({
                   </CollapsibleTrigger>
                   <CollapsibleContent className="px-4 pb-4 space-y-3">
                     {nextSongs.slice(1, 3).map((queueSong, index) => (
-                      <div key={queueSong.id} className="flex items-center gap-3 rounded-xl border border-slate-200/70 bg-white/70 p-3 dark:border-white/10 dark:bg-white/5">
+                      <div key={queueSong.id} className="flex items-center gap-3 rounded-xl border border-slate-200/70 bg-white/70 p-3 dark:border-border/80 dark:bg-secondary/45">
                         <img
                           src={queueSong.coverUrl}
                           alt={queueSong.title}
@@ -947,7 +1045,7 @@ export function SongDetailsPage({
               )}
               <div
                 ref={lyricsRef}
-                className="flex-1 overflow-y-auto rounded-2xl p-6 custom-scrollbar bg-white border border-slate-200/70 shadow-sm dark:bg-white/5 dark:border-white/10"
+                className="flex-1 overflow-y-auto rounded-2xl p-6 custom-scrollbar bg-white border border-slate-200/70 shadow-sm dark:bg-secondary/45 dark:border-border/80"
               >
                 {hasSyncedLyrics ? (
                   <div className="space-y-3">
@@ -985,7 +1083,7 @@ export function SongDetailsPage({
                   </div>
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center gap-3 text-center">
-                    <div className="w-12 h-12 rounded-full flex items-center justify-center bg-slate-100 dark:bg-white/10">
+                    <div className="w-12 h-12 rounded-full flex items-center justify-center bg-slate-100 dark:bg-secondary/60">
                       <Music2 className="w-5 h-5 text-slate-500 dark:text-white/30" />
                     </div>
                     <p className="text-slate-500 dark:text-white/40 text-sm">

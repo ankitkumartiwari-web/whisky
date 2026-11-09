@@ -1,4 +1,4 @@
-import { BarChart3, Download, Heart, Mic2, Pause, Play, Sparkles, WifiOff, X } from 'lucide-react';
+import { BarChart3, Download, Heart, Mic2, Pause, Play, WifiOff, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import type { Song } from '../../data/mockData';
 import { useTheme } from '../../context/ThemeContext';
@@ -81,7 +81,7 @@ function NowPlayingWidget({ ctx, onRemove }: { ctx: WidgetContext; onRemove: () 
           <button
             type="button"
             onClick={onPlayPause}
-            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-[#0A0A0A] hover:bg-[var(--accent)]"
+            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-[var(--accent)] text-accent-foreground hover:brightness-105"
           >
             {isPlaying ? <Pause className="h-4 w-4 fill-current" /> : <Play className="h-4 w-4 fill-current" />}
           </button>
@@ -117,7 +117,7 @@ function NowPlayingPage({ ctx }: { ctx: WidgetContext }) {
             <button
               type="button"
               onClick={onPlayPause}
-              className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-6 py-3 text-sm font-semibold text-[#0A0A0A] hover:bg-[var(--accent)]"
+              className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-6 py-3 text-sm font-semibold text-accent-foreground hover:brightness-105"
             >
               {isPlaying ? <Pause className="h-4 w-4 fill-current" /> : <Play className="h-4 w-4 fill-current" />}
               {isPlaying ? 'Pause' : 'Play'}
@@ -393,10 +393,10 @@ function CuratorTipWidget({ ctx, onRemove }: { ctx: WidgetContext; onRemove: () 
   }, [tips.length]);
 
   return (
-    <WidgetShell title="Curator tip" onRemove={onRemove}>
+    <WidgetShell title="Maestro tip" onRemove={onRemove}>
       <div className="flex items-start gap-3">
-        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-amber-400/10 text-amber-400">
-          <Sparkles className="h-3.5 w-3.5" />
+        <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-accent/15 shadow-soft">
+          <img src="/brand-mark.svg" alt="" draggable={false} className="h-4 w-4 rounded-[0.35rem]" />
         </div>
         <p className="text-xs leading-relaxed text-foreground/90">{tips[idx]}</p>
       </div>
@@ -408,7 +408,7 @@ function useTips(ctx: WidgetContext) {
   return useMemo(() => {
     const fallback = [
       'Liking 5+ songs sharpens your daily mix.',
-      'Try the AI Curator with "Songs that feel like X" for smart matches.',
+      'Try Maestro with "Songs that feel like X" for smart matches.',
       'Mood Music adapts to your onboarding language automatically.',
       'Synced lyrics auto-scroll with the song in the lyrics view.',
     ];
@@ -425,18 +425,21 @@ function CuratorTipPage({ ctx }: { ctx: WidgetContext }) {
   const tips = useTips(ctx);
   return (
     <div className="space-y-8">
-      <div>
-        <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Daily insights</p>
-        <h2 className="text-4xl tracking-tight">Curator tips</h2>
+      <div className="flex items-center gap-4">
+        <img src="/brand-mark.svg" alt="" draggable={false} className="h-14 w-14 rounded-2xl shadow-soft" />
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Daily insights</p>
+          <h2 className="text-4xl tracking-tight">Maestro tips</h2>
+        </div>
       </div>
       <ul className="space-y-3 max-w-3xl">
         {tips.map((tip, idx) => (
           <li
             key={idx}
-            className="flex items-start gap-3 rounded-2xl border border-amber-400/20 bg-amber-400/5 px-5 py-4"
+            className="flex items-start gap-3 rounded-2xl border border-accent/20 bg-accent/5 px-5 py-4"
           >
-            <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-amber-400/10 text-amber-400">
-              <Sparkles className="h-4 w-4" />
+            <div className="mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-accent/15 shadow-soft">
+              <img src="/brand-mark.svg" alt="" draggable={false} className="h-4 w-4 rounded-[0.35rem]" />
             </div>
             <p className="text-sm leading-relaxed">{tip}</p>
           </li>
@@ -786,7 +789,7 @@ export const WIDGET_REGISTRY: WidgetDefinition[] = [
   },
   {
     id: 'curator-tip',
-    title: 'Curator Tips',
+    title: 'Maestro Tips',
     description: 'Rotating insights about your library.',
     iconKey: 'curator',
     Component: CuratorTipWidget,

@@ -84,7 +84,7 @@ const MusicPlayer = (props: MusicPlayerProps) => {
   return (
     <AnimatePresence>
       <motion.div
-        className="fixed bottom-0 left-20 right-0 bg-black/95 backdrop-blur-2xl border-t border-white/10"
+        className="fixed bottom-4 left-24 right-4 z-30 rounded-[2rem] border border-border/80 bg-card/90 shadow-float backdrop-blur-2xl"
         initial={{ y: 100 }}
         animate={{ y: 0 }}
         transition={{ type: 'spring', damping: 30 }}
@@ -107,13 +107,13 @@ const MusicPlayer = (props: MusicPlayerProps) => {
                   alt={currentSong.title}
                   className="w-full h-full object-cover"
                 />
-                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                  <Maximize2 className="w-5 h-5 text-white" />
+                <div className="absolute inset-0 bg-background/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                  <Maximize2 className="w-5 h-5 text-foreground" />
                 </div>
               </motion.button>
               <div className="min-w-0 flex-1">
-                <h4 className="text-sm text-white truncate font-medium">{currentSong.title}</h4>
-                <p className="text-xs text-white/60 truncate">{currentSong.artist}</p>
+                <h4 className="text-sm text-foreground truncate font-semibold">{currentSong.title}</h4>
+                <p className="text-xs text-muted-foreground truncate">{currentSong.artist}</p>
               </div>
               <button
                 onClick={() => {
@@ -121,7 +121,7 @@ const MusicPlayer = (props: MusicPlayerProps) => {
                   onToggleLike?.(currentSong);
                 }}
                 className={`transition-colors flex-shrink-0 ${
-                  isLiked ? 'text-accent' : 'text-white/40 hover:text-white'
+                  isLiked ? 'text-accent' : 'text-muted-foreground/60 hover:text-foreground'
                 }`}
               >
                 <Heart className={`w-5 h-5 ${isLiked ? 'fill-current' : ''}`} />
@@ -136,7 +136,7 @@ const MusicPlayer = (props: MusicPlayerProps) => {
                   title={isShuffle ? 'Shuffle on' : 'Shuffle off'}
                   aria-pressed={isShuffle}
                   className={`transition-colors ${
-                    isShuffle ? 'text-accent' : 'text-white/60 hover:text-white'
+                    isShuffle ? 'text-accent' : 'text-muted-foreground hover:text-foreground'
                   }`}
                 >
                   <Shuffle className="w-4 h-4" />
@@ -144,7 +144,7 @@ const MusicPlayer = (props: MusicPlayerProps) => {
 
                 <button
                   onClick={onPrevious}
-                  className="text-white/80 hover:text-white transition-colors"
+                  className="text-foreground/80 hover:text-foreground transition-colors"
                 >
                   <SkipBack className="w-5 h-5 fill-current" />
                 </button>
@@ -154,11 +154,11 @@ const MusicPlayer = (props: MusicPlayerProps) => {
                 <button
                   onClick={onPlayPause}
                   disabled={isBuffering}
-                  className="w-10 h-10 rounded-full bg-white text-black flex items-center justify-center hover:scale-105 transition-transform relative"
+                  className="w-10 h-10 rounded-full bg-accent text-accent-foreground flex items-center justify-center hover:scale-105 transition-transform relative shadow-soft"
                 >
                   {isBuffering ? (
                     <svg
-                      className="animate-spin h-5 w-5 text-black"
+                      className="animate-spin h-5 w-5 text-accent-foreground"
                       xmlns="http://www.w3.org/2000/svg"
                       fill="none"
                       viewBox="0 0 24 24"
@@ -175,7 +175,7 @@ const MusicPlayer = (props: MusicPlayerProps) => {
 
                 <button
                   onClick={onNext}
-                  className="text-white/80 hover:text-white transition-colors"
+                  className="text-foreground/80 hover:text-foreground transition-colors"
                 >
                   <SkipForward className="w-5 h-5 fill-current" />
                 </button>
@@ -190,7 +190,7 @@ const MusicPlayer = (props: MusicPlayerProps) => {
                            : 'Repeat off'
                      }
                      className={`transition-colors ${
-                       repeatMode !== 'off' ? 'text-accent' : 'text-white/60 hover:text-white'
+                       repeatMode !== 'off' ? 'text-accent' : 'text-muted-foreground hover:text-foreground'
                      }`}
                    >
                      <span className="relative inline-flex items-center justify-center w-6 h-6 overflow-visible">
@@ -200,7 +200,7 @@ const MusicPlayer = (props: MusicPlayerProps) => {
                          <Repeat className="w-5 h-5" />
                        )}
                        {repeatMode === 'one' && (
-                         <span className="absolute -top-2 -right-2 z-20 flex h-5 min-w-5 items-center justify-center rounded-full bg-black px-1 text-[11px] font-extrabold leading-none text-white border border-accent shadow-[0_0_0_2px_rgba(0,0,0,0.55)]">
+                         <span className="absolute -top-2 -right-2 z-20 flex h-5 min-w-5 items-center justify-center rounded-full bg-card px-1 text-[11px] font-extrabold leading-none text-foreground border border-accent shadow-soft">
                            1
                          </span>
                        )}
@@ -210,7 +210,7 @@ const MusicPlayer = (props: MusicPlayerProps) => {
 
               {/* Progress Slider */}
               <div className="flex items-center gap-3 w-full max-w-2xl">
-                <span className="text-xs text-black dark:text-white/60 min-w-[40px] text-right">
+                <span className="text-xs text-muted-foreground min-w-[40px] text-right">
                   {formatTime(currentTime)}
                 </span>
                 <div className="flex-1">
@@ -224,7 +224,7 @@ const MusicPlayer = (props: MusicPlayerProps) => {
                     className="w-full"
                   />
                 </div>
-                <span className="text-xs text-black dark:text-white/60 min-w-[40px]">
+                <span className="text-xs text-muted-foreground min-w-[40px]">
                   {formatTime(totalTime)}
                 </span>
               </div>
@@ -233,7 +233,7 @@ const MusicPlayer = (props: MusicPlayerProps) => {
             {/* Volume Control - Right */}
             <div className="flex items-center gap-4 w-80 justify-end">
               <div className="flex items-center gap-3">
-                <Volume2 className="w-5 h-5 text-[color:var(--accent,var(--accent))] dark:text-[color:var(--accent,var(--accent))]" />
+                <Volume2 className="w-5 h-5 text-accent" />
                 <div className="w-28">
                   <Slider
                     value={[volume]}
@@ -246,7 +246,7 @@ const MusicPlayer = (props: MusicPlayerProps) => {
               </div>
               <button
                 onClick={onShowLyrics}
-                className="text-white/60 hover:text-white transition-colors ml-2"
+                className="text-muted-foreground hover:text-foreground transition-colors ml-2"
                 title="Show lyrics"
               >
                 <Maximize2 className="w-5 h-5" />

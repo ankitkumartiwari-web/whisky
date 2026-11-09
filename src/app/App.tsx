@@ -21,7 +21,7 @@ import { WIDGET_REGISTRY } from './components/widgets/widgetRegistry';
 import { ResetPasswordPage } from './components/ResetPasswordPage';
 import { Skeleton } from './components/ui/skeleton';
 import { Tabs, TabsList, TabsTrigger } from './components/ui/tabs';
-import { Sparkles, Users } from 'lucide-react';
+import { Users } from 'lucide-react';
 import { motion, type Variants } from 'motion/react';
 import { supabase, supabaseConfigError } from './lib/supabaseClient';
 import { logRecommendationEvent, requestPasswordResetEmail, sendWelcomeEmail } from './lib/resendApi';
@@ -1246,8 +1246,8 @@ function AppContent() {
 
   if (isAuthLoading) {
     return (
-      <div className="min-h-screen bg-background text-foreground flex items-center justify-center px-6">
-        <div className="w-full max-w-2xl rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl p-8 md:p-10">
+      <div className="app-shell-bg min-h-screen text-foreground flex items-center justify-center px-6">
+        <div className="w-full max-w-2xl rounded-3xl border border-border/70 bg-card/50 backdrop-blur-xl p-8 md:p-10">
           <div className="flex items-center gap-4 mb-8">
             <Skeleton className="h-14 w-14 rounded-2xl" />
             <div className="space-y-3">
@@ -1290,10 +1290,10 @@ function AppContent() {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground overflow-x-hidden">
+    <div className="app-shell-bg min-h-screen text-foreground overflow-x-hidden">
       <CustomCursor />
       {isOffline && (
-        <div className="fixed left-20 right-0 top-0 z-[90] flex items-center justify-center gap-2 bg-amber-500/90 px-4 py-1.5 text-xs font-medium text-amber-950">
+        <div className="fixed left-24 right-4 top-2 z-[90] flex items-center justify-center gap-2 rounded-2xl bg-amber-500/90 px-4 py-1.5 text-xs font-medium text-amber-950 shadow-soft">
           You are offline. Browsing your downloads — audio playback needs internet.
         </div>
       )}
@@ -1313,6 +1313,70 @@ function AppContent() {
           src={directAudioUrl}
           preload="auto"
           autoPlay={isPlaying}
+          onLoadedMetadata={(e) => {
+            // Some YouTube matches are 30-second teasers/Shorts even though the song is
+            // 5+ minutes. Detect the mismatch on load and quietly look up a full-length
+            // video for the SAME song (reusing the iframe error path's bookkeeping).
+            const songAtLoad = currentSong;
+            const expected = songAtLoad?.duration ?? 0;
+            const actual = e.currentTarget.duration;
+            if (
+              !songAtLoad?.videoId ||
+              !Number.isFinite(actual) ||
+              actual <= 0 ||
+              expected <= 0
+            ) {
+              return;
+            }
+            const isShortClip = actual < expected * 0.75 && expected - actual >= 45;
+            if (!isShortClip) return;
+            const failedKey = songAtLoad.id;
+            if (altLookupInFlightRef.current === failedKey) return;
+            const triedSet = triedVideoIdsRef.current.get(failedKey) ?? new Set<string>();
+            triedSet.add(songAtLoad.videoId);
+            triedVideoIdsRef.current.set(failedKey, triedSet);
+            if (triedSet.size > 5) return;
+
+            altLookupInFlightRef.current = failedKey;
+            setPlaybackNotice(
+              `"${songAtLoad.title}" resolved to a short clip — finding the full track…`,
+            );
+            const params = new URLSearchParams({
+              title: songAtLoad.title,
+              artist: songAtLoad.artist,
+              exclude: Array.from(triedSet).join(','),
+              duration: String(expected),
+            });
+            fetch(`/api/resolve-alt?${params.toString()}`)
+              .then((r) => (r.ok ? r.json() : null))
+              .then((data: { videoId?: string } | null) => {
+                altLookupInFlightRef.current = null;
+                const nextVideoId = data?.videoId;
+                if (!nextVideoId) {
+                  setPlaybackNotice(
+                    `Playing the best available version of "${songAtLoad.title}".`,
+                  );
+                  return;
+                }
+                setCurrentSong((curr) =>
+                  curr && curr.id === failedKey ? { ...curr, videoId: nextVideoId } : curr,
+                );
+                setRecentlyPlayedSongs((prev) =>
+                  prev.map((entry) =>
+                    entry.id === failedKey ? { ...entry, videoId: nextVideoId } : entry,
+                  ),
+                );
+                setLikedSongItems((prev) =>
+                  prev[failedKey] ? { ...prev, [failedKey]: { ...prev[failedKey], videoId: nextVideoId } } : prev,
+                );
+                songDirectoryRef.current.set(failedKey, { ...songAtLoad, videoId: nextVideoId });
+                setCurrentTime(0);
+                setProgress(0);
+              })
+              .catch(() => {
+                altLookupInFlightRef.current = null;
+              });
+          }}
           onTimeUpdate={(e) => {
             const dur = e.currentTarget.duration;
             const cur = e.currentTarget.currentTime;
@@ -1447,10 +1511,11 @@ function AppContent() {
           setSearchQuery('');
           void handlePlaySong(song);
         }}
-        recentSongs={recentlyPlayedSongs}
-      />
+          recentSongs={recentlyPlayedSongs}
+          onProfileUpdate={(name) => setDisplayName(name)}
+        />
 
-      <main className="pt-40 pb-40 px-12 ml-20">
+      <main className="pt-40 pb-44 px-12 ml-24">
         <div className="max-w-[1800px] mx-auto">
           <motion.div
             className="mb-24"
@@ -1628,15 +1693,20 @@ function AppContent() {
       {!isAIAssistantOpen && (
         <motion.button
           onClick={() => setIsAIAssistantOpen(true)}
-          className="fixed right-8 bottom-24 z-[70] flex items-center gap-3 px-6 py-4 rounded-full bg-accent text-accent-foreground hover:brightness-110 transition-all group shadow-2xl ring-1 ring-accent/40"
+          className="fixed right-8 bottom-40 z-[70] flex items-center gap-3 px-6 py-4 rounded-full bg-accent text-accent-foreground hover:brightness-110 transition-all group shadow-2xl ring-1 ring-accent/40"
           whileHover={{ scale: 1.05, boxShadow: '0 24px 50px rgba(216, 163, 92, 0.45)' }}
           whileTap={{ scale: 0.98 }}
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.5 }}
         >
-          <Sparkles className="w-5 h-5 group-hover:rotate-12 transition-transform" />
-          <span className="text-sm font-semibold">AI Curator</span>
+          <img
+            src="/brand-mark.svg"
+            alt=""
+            draggable={false}
+            className="h-6 w-6 rounded-lg shadow-soft transition-transform group-hover:-rotate-6"
+          />
+          <span className="text-sm font-semibold">Maestro</span>
         </motion.button>
       )}
 
@@ -1690,6 +1760,7 @@ function AppContent() {
         playbackTime={currentTime}
         audioRef={audioElRef}
         onPlayPause={handlePlayPause}
+        onProgressChange={handleProgressChange}
         onToggleLike={handleLikeSong}
       />
 

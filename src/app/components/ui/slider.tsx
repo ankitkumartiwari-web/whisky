@@ -41,7 +41,7 @@ function Slider({
         className={cn(
           "relative grow overflow-hidden rounded-full",
           "data-[orientation=horizontal]:h-2 data-[orientation=horizontal]:w-full data-[orientation=vertical]:h-full data-[orientation=vertical]:w-2",
-          "bg-gray-300 dark:bg-white/10"
+          "bg-gray-300 dark:bg-secondary/60"
         )}
       >
         <SliderPrimitive.Range

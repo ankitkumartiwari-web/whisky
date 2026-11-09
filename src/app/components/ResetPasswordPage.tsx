@@ -1,6 +1,6 @@
 import { FormEvent, useState } from 'react';
 import { motion } from 'motion/react';
-import { Disc3, Lock, Moon, Sun } from 'lucide-react';
+import { Lock, Moon, Sun } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { CustomCursor } from './CustomCursor';
 
@@ -51,7 +51,7 @@ export function ResetPasswordPage({ onUpdatePassword, onBack, configError }: Res
   };
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-background text-foreground">
+    <div className="app-shell-bg relative min-h-screen overflow-hidden text-foreground">
       <CustomCursor />
 
       <div className="pointer-events-none absolute inset-0 opacity-70">
@@ -63,7 +63,7 @@ export function ResetPasswordPage({ onUpdatePassword, onBack, configError }: Res
       <div className="relative z-10 flex min-h-screen flex-col px-6 py-8 sm:px-10">
         <div className="mx-auto flex w-full max-w-6xl items-center justify-between">
           <div className="flex items-center gap-3">
-            <Disc3 className="h-8 w-8 text-accent" />
+            <img src="/brand-mark.svg" alt="" className="h-8 w-8 rounded-[0.6rem]" draggable={false} />
             <p className="text-sm uppercase tracking-[0.25em] text-muted-foreground">Whisky</p>
           </div>
 
@@ -151,7 +151,7 @@ export function ResetPasswordPage({ onUpdatePassword, onBack, configError }: Res
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="w-full rounded-xl bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-[#0A0A0A] transition-colors hover:bg-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-70"
+                  className="w-full rounded-xl bg-[var(--accent)] px-4 py-3 text-sm font-semibold text-accent-foreground transition-colors hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-70"
                 >
                   {isSubmitting ? 'Updating password...' : 'Update Password'}
                 </button>

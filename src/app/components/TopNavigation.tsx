@@ -3,6 +3,8 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useTheme } from '../context/ThemeContext';
 import { motion, AnimatePresence } from 'motion/react';
 import type { Song } from '../data/mockData';
+import { ProfileMenu } from './ProfileMenu';
+import { WindowControls } from './WindowControls';
 
 export type ContentLanguage = 'English' | 'Hindi';
 
@@ -40,20 +42,7 @@ interface TopNavigationProps {
   isSuggestionsLoading?: boolean;
   onSuggestionPick?: (song: Song) => void;
   recentSongs?: Song[];
-}
-
-function getInitials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-
-  if (parts.length === 0) {
-    return 'JD';
-  }
-
-  if (parts.length === 1) {
-    return parts[0].slice(0, 2).toUpperCase();
-  }
-
-  return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+  onProfileUpdate?: (name: string) => void;
 }
 
 export function TopNavigation({
@@ -64,16 +53,9 @@ export function TopNavigation({
   isSuggestionsLoading = false,
   onSuggestionPick,
   recentSongs = [],
+  onProfileUpdate,
 }: TopNavigationProps) {
   const { theme, toggleTheme } = useTheme();
-  // Windows draws its window controls as an overlay inside the app frame, so the
-  // bar reserves space for them. macOS/Linux keep the native frame.
-  const desktopPlatform =
-    typeof window !== 'undefined'
-      ? window.whiskyDesktop?.platform ?? window.__WHISKY_PLATFORM__
-      : undefined;
-  const isWindowsDesktop = desktopPlatform === 'win32';
-  const initials = getInitials(displayName);
   const searchHint = searchQuery.trim()
     ? `Recommendations for "${searchQuery.trim()}" will appear below.`
     : 'Type a song name to see recommendations.';
@@ -188,13 +170,10 @@ export function TopNavigation({
   let rowIndex = 0;
 
   return (
-    <div className="fixed top-0 left-20 right-0 bg-background/60 backdrop-blur-xl border-b border-border z-40">
-      {/* Windows reserves ~160px on the right for the titleBarOverlay controls. */}
-      <div
-        className={`pl-12 ${isWindowsDesktop ? 'pr-[160px]' : 'pr-12'} py-6 flex items-center justify-between`}
-      >
+    <div className="app-region-drag fixed top-3 left-24 right-4 z-40 rounded-[1.75rem] border border-border/70 bg-card/70 shadow-soft backdrop-blur-2xl">
+      <div className="pl-10 pr-5 py-5 flex items-center justify-between">
         {/* Search Bar */}
-        <div className="flex-1 max-w-2xl" ref={wrapperRef}>
+        <div className="app-region-no-drag flex-1 max-w-2xl" ref={wrapperRef}>
           <div className="space-y-2 relative">
             <div className="relative group bg-secondary/50 rounded-full px-6 py-3 transition-all hover:bg-secondary">
               <Search className="absolute left-6 top-1/2 transform -translate-y-1/2 w-5 h-5 text-muted-foreground transition-colors group-hover:text-foreground" />
@@ -336,7 +315,7 @@ export function TopNavigation({
           {/* Theme Toggle */}
           <motion.button
             onClick={toggleTheme}
-            className="p-3 rounded-full bg-secondary text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors"
+            className="app-region-no-drag p-3 rounded-full bg-secondary text-muted-foreground hover:text-foreground hover:bg-secondary/80 transition-colors"
             aria-label="Toggle theme"
             whileHover={{ scale: 1.1, rotate: 15 }}
             whileTap={{ scale: 0.95 }}
@@ -348,15 +327,9 @@ export function TopNavigation({
             )}
           </motion.button>
 
-          {/* User Initial */}
-          <motion.div
-            className="w-11 h-11 rounded-full bg-gradient-to-br from-accent to-accent/70 text-accent-foreground flex items-center justify-center text-sm font-medium shadow-lg"
-            whileHover={{ scale: 1.1 }}
-            whileTap={{ scale: 0.95 }}
-            title={displayName}
-          >
-            {initials}
-          </motion.div>
+          {/* User Profile */}
+          <ProfileMenu displayName={displayName} onNameChange={onProfileUpdate} />
+          <WindowControls />
         </div>
       </div>
     </div>

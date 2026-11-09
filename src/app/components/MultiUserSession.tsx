@@ -59,7 +59,7 @@ export function MultiUserSession({ room }: MultiUserSessionProps) {
 
   if (!isConfigured) {
     return (
-      <div className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl p-10 text-center">
+      <div className="rounded-3xl border border-border/70 bg-card/50 backdrop-blur-xl p-10 text-center">
         <div className="mx-auto mb-6 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent/10 text-accent">
           <WifiOff className="h-7 w-7" />
         </div>
@@ -78,7 +78,7 @@ export function MultiUserSession({ room }: MultiUserSessionProps) {
       <motion.div
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
-        className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl p-10"
+        className="rounded-3xl border border-border/70 bg-card/50 backdrop-blur-xl p-10"
       >
         <div className="grid md:grid-cols-2 gap-10">
           <div className="space-y-6">
@@ -98,13 +98,13 @@ export function MultiUserSession({ room }: MultiUserSessionProps) {
             <button
               type="button"
               onClick={createRoom}
-              className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-6 py-3 text-sm font-semibold text-[#0A0A0A] transition-colors hover:bg-[var(--accent)]"
+              className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-6 py-3 text-sm font-semibold text-accent-foreground transition-colors hover:brightness-105"
             >
               <Radio className="h-4 w-4" /> Create new room
             </button>
           </div>
 
-          <div className="space-y-6 md:border-l md:border-white/10 md:pl-10">
+          <div className="space-y-6 md:border-l md:border-border/70 md:pl-10">
             <div className="flex items-center gap-3">
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-secondary text-foreground">
                 <Users className="h-6 w-6" />
@@ -120,11 +120,11 @@ export function MultiUserSession({ room }: MultiUserSessionProps) {
                 onChange={(event) => setPendingCode(event.target.value.replace(/\s+/g, '').toUpperCase())}
                 placeholder="Enter code (e.g. AB7K2P)"
                 maxLength={8}
-                className="w-full rounded-2xl border border-white/10 bg-secondary/40 px-5 py-3 text-base tracking-[0.3em] text-foreground placeholder:text-muted-foreground/60 focus:border-accent focus:outline-none"
+                className="w-full rounded-2xl border border-border/70 bg-secondary/40 px-5 py-3 text-base tracking-[0.3em] text-foreground placeholder:text-muted-foreground/60 focus:border-accent focus:outline-none"
               />
               <button
                 type="submit"
-                className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-6 py-3 text-sm font-semibold text-foreground transition-colors hover:bg-white/10"
+                className="inline-flex items-center gap-2 rounded-full border border-border bg-card/50 px-6 py-3 text-sm font-semibold text-foreground transition-colors hover:bg-secondary/70"
               >
                 Join room
               </button>
@@ -138,7 +138,7 @@ export function MultiUserSession({ room }: MultiUserSessionProps) {
 
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
-      <div className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl p-8">
+      <div className="rounded-3xl border border-border/70 bg-card/50 backdrop-blur-xl p-8">
         <div className="flex flex-wrap items-center justify-between gap-6">
           <div className="space-y-2">
             <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Room code</p>
@@ -147,7 +147,7 @@ export function MultiUserSession({ room }: MultiUserSessionProps) {
               <button
                 type="button"
                 onClick={copyRoomCode}
-                className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-white/10"
+                className="inline-flex items-center gap-2 rounded-full border border-border bg-card/50 px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-secondary/70"
               >
                 {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                 {copied ? 'Copied' : 'Copy'}
@@ -179,7 +179,7 @@ export function MultiUserSession({ room }: MultiUserSessionProps) {
             <button
               type="button"
               onClick={leaveRoom}
-              className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm text-foreground transition-colors hover:bg-white/10"
+              className="inline-flex items-center gap-2 rounded-full border border-border bg-card/50 px-4 py-2 text-sm text-foreground transition-colors hover:bg-secondary/70"
             >
               <LogOut className="h-4 w-4" /> Leave
             </button>
@@ -187,7 +187,7 @@ export function MultiUserSession({ room }: MultiUserSessionProps) {
         </div>
 
         <div className="mt-8 grid gap-6 md:grid-cols-3">
-          <div className="md:col-span-2 rounded-2xl border border-white/10 bg-background/40 p-6">
+          <div className="md:col-span-2 rounded-2xl border border-border/70 bg-background/40 p-6">
             <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground mb-3">Now playing</p>
             {currentSongId ? (
               <div>
@@ -202,7 +202,7 @@ export function MultiUserSession({ room }: MultiUserSessionProps) {
           </div>
 
           <div className="space-y-3">
-            <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-background/40 p-5 cursor-pointer">
+            <label className="flex items-start gap-3 rounded-2xl border border-border/70 bg-background/40 p-5 cursor-pointer">
               <input
                 type="checkbox"
                 checked={isSyncing}
@@ -214,7 +214,7 @@ export function MultiUserSession({ room }: MultiUserSessionProps) {
                 <p className="text-xs text-muted-foreground mt-1">Others see what you play in real time.</p>
               </div>
             </label>
-            <label className="flex items-start gap-3 rounded-2xl border border-white/10 bg-background/40 p-5 cursor-pointer">
+            <label className="flex items-start gap-3 rounded-2xl border border-border/70 bg-background/40 p-5 cursor-pointer">
               <input
                 type="checkbox"
                 checked={followAlong}
@@ -256,7 +256,7 @@ export function MultiUserSession({ room }: MultiUserSessionProps) {
         )}
       </div>
 
-      <div className="rounded-3xl border border-white/10 bg-white/5 backdrop-blur-xl p-8">
+      <div className="rounded-3xl border border-border/70 bg-card/50 backdrop-blur-xl p-8">
         <div className="flex items-center justify-between mb-6">
           <div>
             <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Listeners</p>
@@ -301,7 +301,7 @@ export function MultiUserSession({ room }: MultiUserSessionProps) {
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95 }}
-                    className="flex items-center gap-3 rounded-2xl border border-white/10 bg-background/40 px-4 py-3"
+                    className="flex items-center gap-3 rounded-2xl border border-border/70 bg-background/40 px-4 py-3"
                   >
                     <div
                       className={`relative flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br ${gradient} text-sm font-semibold text-white`}

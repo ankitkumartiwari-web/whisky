@@ -36,7 +36,7 @@ process.on('unhandledRejection', (reason) => {
   safeAppendCrash('unhandledRejection', reason && (reason.stack || reason.message) || String(reason));
 });
 
-const { app, BrowserWindow, shell, Menu, dialog } = require('electron');
+const { app, BrowserWindow, shell, Menu, dialog, ipcMain, clipboard } = require('electron');
 const { spawn } = require('node:child_process');
 const net = require('node:net');
 
@@ -45,16 +45,23 @@ if (dialog && typeof dialog.showErrorBox === 'function') {
   const originalShowErrorBox = dialog.showErrorBox.bind(dialog);
   dialog.showErrorBox = (title, content) => {
     safeAppendCrash('showErrorBox', `${title}: ${content}`);
-    // intentionally swallow â€” do not show the dialog
+    // intentionally swallow — do not show the dialog
     void originalShowErrorBox; // silence linter
   };
 }
 
 const isDev = !app.isPackaged;
+
+// Expose the Chromium DevTools protocol for automated UI checks. Dev uses 9222 by
+// default; a packaged build opts in only when WHISKY_CDP_PORT is set.
+if (isDev || process.env.WHISKY_CDP_PORT) {
+  app.commandLine.appendSwitch('remote-debugging-port', process.env.WHISKY_CDP_PORT || '9222');
+}
+
 const CONFIGURED_API_PORT = Number(process.env.RESEND_API_PORT || 8787);
 // Resolved at startup. If the preferred port is taken (another Whisky instance or an
 // unrelated app), we fall back to the next free one instead of silently running without
-// a backend â€” without this the UI loads from file:// and every /api call fails.
+// a backend — without this the UI loads from file:// and every /api call fails.
 let apiPort = CONFIGURED_API_PORT;
 const API_PORT_CANDIDATES = [
   CONFIGURED_API_PORT,
@@ -78,7 +85,7 @@ const YT_DLP_BINARY_NAME =
       ? 'yt-dlp_macos'
       : 'yt-dlp';
 
-// Enforce single instance â€” second launches focus the running window instead of opening a new one.
+// Enforce single instance — second launches focus the running window instead of opening a new one.
 // Must be before app.whenReady() so the second invocation exits before doing any work.
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -139,7 +146,9 @@ async function isWhiskyApiUp(port) {
     const res = await fetch(`http://127.0.0.1:${port}/api/health`);
     if (!res.ok) return false;
     const payload = await res.json().catch(() => null);
-    return payload?.apiVersion === 2;
+    // A stray dev API also reports apiVersion 2 but serves no bundled UI; reusing it
+    // used to leave the packaged splash stuck forever.
+    return payload?.apiVersion === 2 && (isDev || payload?.ui === true);
   } catch {
     return false;
   }
@@ -178,7 +187,7 @@ function spawnApiOnPort(port) {
     if (fs.existsSync(devYtdlp)) childEnv.YTDLP_PATH = devYtdlp;
   }
 
-  // In packaged builds, process.stdout/stderr are not real pipes â€” writing to them throws EPIPE.
+  // In packaged builds, process.stdout/stderr are not real pipes — writing to them throws EPIPE.
   // Open a log file we can safely append to instead.
   let logStream = null;
   try {
@@ -224,24 +233,25 @@ function spawnApiOnPort(port) {
 }
 
 async function startApiServer() {
-  if (apiProcess) return;
+  if (apiProcess) return true;
   for (const port of API_PORT_CANDIDATES) {
     if (await isWhiskyApiUp(port)) {
       apiPort = port;
       safeAppendCrash('startApiServer', `Reusing Whisky API already running on ${port}`);
-      return;
+      return true;
     }
     if (!(await isPortFree(port))) {
       safeAppendCrash('startApiServer', `Port ${port} is in use by another app, trying next`);
       continue;
     }
     apiPort = port;
-    if (!spawnApiOnPort(port)) return;
-    if (await waitForApi(12000)) return;
+    if (!spawnApiOnPort(port)) return false;
+    if (await waitForApi(12000)) return true;
     safeAppendCrash('startApiServer', `API on ${port} never became healthy, trying next`);
     stopApiServer();
   }
   safeAppendCrash('startApiServer', `No usable local API port among ${API_PORT_CANDIDATES.join(', ')}`);
+  return false;
 }
 
 function stopApiServer() {
@@ -288,20 +298,60 @@ function resolveAppIcon() {
   return undefined;
 }
 
-async function createWindow() {
+async function loadPackagedUi(win, apiReady) {
+  if (!win || win.isDestroyed()) return;
+  if (apiReady) {
+    const url = `http://127.0.0.1:${apiPort}/`;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        await win.loadURL(url);
+        return;
+      } catch (err) {
+        safeAppendCrash(
+          'postSplashLoad',
+          `attempt ${attempt}: ${err && err.message ? err.message : String(err)}`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 700));
+        if (!win || win.isDestroyed()) return;
+      }
+    }
+  }
+  // API never became reachable (or the UI URL kept failing). Show an actionable error
+  // instead of leaving the user staring at the splash forever.
+  try {
+    await win.loadFile(path.join(__dirname, 'startup-error.html'));
+  } catch (err) {
+    safeAppendCrash('startupErrorPage', err && err.message ? err.message : String(err));
+  }
+}
+
+async function retryStartup() {
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
+  try {
+    await win.loadFile(path.join(__dirname, 'splash.html'));
+  } catch {
+    /* keep going */
+  }
+  stopApiServer();
+  const apiReady = await startApiServer();
+  await loadPackagedUi(win, apiReady);
+}
+
+async function createWindow(apiReadyPromise) {
   const iconPath = resolveAppIcon();
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 1024,
     minHeight: 720,
-    backgroundColor: '#0E0B07',
-    // macOS keeps the native traffic lights, inset so they don't overlap the
-    // sidebar. Windows uses the overlay controls coloured to match the theme.
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
-    titleBarOverlay: process.platform === 'win32'
-      ? { color: '#0E0B07', symbolColor: '#F4ECDC', height: 32 }
-      : undefined,
+      backgroundColor: '#14111A',
+      // macOS keeps the native traffic lights, inset so they don't overlap the
+      // sidebar. Windows goes frameless and draws themed window controls in the
+      // renderer so the title bar blends into the floating top bar.
+      ...(process.platform === 'win32'
+        ? { frame: false }
+        : { titleBarStyle: 'hiddenInset' }),
     autoHideMenuBar: true,
     icon: iconPath,
     show: false,
@@ -345,33 +395,59 @@ async function createWindow() {
   if (isDev) {
     // In dev, Vite needs to be ready before we can load the URL.
     await waitForApi(15000);
+    if (!mainWindow) return;
     await mainWindow.loadURL(DEV_URL);
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
-    // Show the splash IMMEDIATELY so the window doesn't sit blank while we wait for
-    // the embedded API to come up. Once the API is ready, swap to the http://localhost
-    // URL (required so window.location.origin is http for the YouTube IFrame embed).
+    // Show the splash IMMEDIATELY, then swap to the API-served http://127.0.0.1 URL
+    // once the embedded API is up (required so window.location.origin is http for the
+    // YouTube IFrame embed). Every failure path ends on a retry screen, never a hang.
     await mainWindow.loadFile(path.join(__dirname, 'splash.html'));
-    waitForApi(10000).then(async (apiReady) => {
-      if (!mainWindow) return;
-      try {
-        if (apiReady) {
-          await mainWindow.loadURL(`http://127.0.0.1:${apiPort}/`);
-        } else {
-          // Fallback: API never came up â€” load file:// so the user sees the UI even
-          // though YouTube embed will be broken. Better than a stuck splash.
-          await mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
-        }
-      } catch (err) {
-        safeAppendCrash('postSplashLoad', err && err.message ? err.message : String(err));
-      }
-    });
+    const apiReady = await (apiReadyPromise ?? startApiServer());
+    if (!mainWindow) return;
+    await loadPackagedUi(mainWindow, apiReady);
   }
+
+  if (!mainWindow) return;
+  const syncMaximized = () => {
+    mainWindow?.webContents.send('window:maximized-changed', Boolean(mainWindow?.isMaximized()));
+  };
+  mainWindow.on('maximize', syncMaximized);
+  mainWindow.on('unmaximize', syncMaximized);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
 }
+
+ipcMain.on('window:minimize', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.minimize();
+});
+
+ipcMain.on('window:toggle-maximize', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win) return;
+  if (win.isMaximized()) win.unmaximize();
+  else win.maximize();
+});
+
+ipcMain.on('window:close', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.close();
+});
+
+ipcMain.handle('window:is-maximized', (event) => {
+  return BrowserWindow.fromWebContents(event.sender)?.isMaximized() ?? false;
+});
+
+ipcMain.on('startup:retry', () => {
+  void retryStartup();
+});
+
+ipcMain.handle('clipboard:write-text', (_event, text) => {
+  const value = typeof text === 'string' ? text : String(text ?? '');
+  clipboard.writeText(value);
+  return clipboard.readText() === value;
+});
 
 app.whenReady().then(async () => {
   // Grant media-related permissions to the renderer + the embedded YouTube iframe so
@@ -380,14 +456,27 @@ app.whenReady().then(async () => {
   const { session: defaultSession } = require('electron');
   const ses = defaultSession.defaultSession;
   ses.setPermissionRequestHandler((_webContents, permission, callback) => {
-    if (['media', 'mediaKeySystem', 'audioCapture', 'background-sync'].includes(permission)) {
+    if (
+      [
+        'media',
+        'mediaKeySystem',
+        'audioCapture',
+        'background-sync',
+        // navigator.clipboard.writeText asks for this in Electron; denying it was why
+        // "Link copied" could appear with an empty clipboard.
+        'clipboard-sanitized-write',
+        'clipboard-read',
+      ].includes(permission)
+    ) {
       return callback(true);
     }
     callback(false);
   });
 
-  await startApiServer();
-  await createWindow();
+  // Kick the API off in the background and show the window/splash immediately — waiting
+  // up to 12s per candidate port before painting anything looked like a dead app.
+  const apiReadyPromise = startApiServer();
+  await createWindow(apiReadyPromise);
 
   if (process.platform === 'darwin') {
     // Keep the standard macOS app + Edit menus so Cmd+C/V/X/A and window
@@ -405,7 +494,7 @@ app.whenReady().then(async () => {
 
   // Auto-update via electron-updater. Reads from GitHub Releases (provider in
   // package.json build.publish). Silently downloads in the background and
-  // notifies the user once the new version is staged â€” they get the update on
+  // notifies the user once the new version is staged — they get the update on
   // next launch. Only runs in packaged builds (autoUpdater no-ops in dev).
   if (!isDev) {
     try {
@@ -419,7 +508,7 @@ app.whenReady().then(async () => {
         safeAppendCrash('autoUpdater', `update available: ${info?.version || '?'}`);
       });
       autoUpdater.on('update-downloaded', (info) => {
-        safeAppendCrash('autoUpdater', `downloaded ${info?.version || '?'} â€” will install on quit`);
+        safeAppendCrash('autoUpdater', `downloaded ${info?.version || '?'} — will install on quit`);
       });
       // Fire-and-forget. checkForUpdatesAndNotify shows the OS notification when
       // an update is downloaded; the actual install runs when the app quits.

@@ -4,26 +4,185 @@
 <meta charset="utf-8" />
 <title>Whisky Music</title>
 <style>
-  html, body { margin: 0; padding: 0; height: 100%; background: #0E0B07; color: #F4ECDC;
-    font-family: 'Cormorant Garamond', Georgia, serif; overflow: hidden; }
-  body { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 24px; }
-  .disc { width: 96px; height: 96px; border-radius: 50%;
-    background: radial-gradient(circle at 50% 50%, #1a130a 0 22%, #D8A35C 22% 28%, #1a130a 28% 96%, #2a1f10 96%);
-    box-shadow: 0 8px 40px rgba(216,163,92,0.25), inset 0 0 30px rgba(0,0,0,0.6);
-    animation: spin 4s linear infinite;
-    position: relative;
+  :root {
+    --bg: #14111a;
+    --fg: #f2ebe3;
+    --muted: #9a8faa;
+    --accent: #e7a97f;
+    --accent-soft: #f3cdb4;
+    --border: rgba(255, 255, 255, 0.09);
   }
-  .disc::after { content: ''; position: absolute; top: 50%; left: 50%; width: 12px; height: 12px;
-    border-radius: 50%; background: #D8A35C; transform: translate(-50%, -50%); }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .title { font-size: 28px; letter-spacing: 0.4em; font-weight: 300; }
-  .sub { font-family: 'Inter', system-ui, sans-serif; font-size: 11px; letter-spacing: 0.3em;
-    text-transform: uppercase; color: rgba(244,236,220,0.4); }
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background: radial-gradient(1100px 700px at 50% 28%, #1e1829 0%, var(--bg) 62%);
+    color: var(--fg);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    user-select: none;
+  }
+  body { display: flex; flex-direction: column; }
+  .drag-region { position: fixed; inset: 0 0 auto 0; height: 54px; -webkit-app-region: drag; }
+  .chrome {
+    position: fixed;
+    top: 12px;
+    right: 14px;
+    z-index: 5;
+    display: flex;
+    gap: 6px;
+    -webkit-app-region: no-drag;
+  }
+  .chrome button {
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(242, 235, 227, 0.68);
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+    padding: 0;
+  }
+  .chrome button:hover { background: rgba(255, 255, 255, 0.1); color: var(--fg); }
+  .chrome button.close:hover { background: #e5484d; border-color: #e5484d; color: #fff; }
+  .stage {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 22px;
+    padding-bottom: 44px;
+    -webkit-app-region: drag;
+  }
+  .mark {
+    width: 86px;
+    height: 86px;
+    border-radius: 24px;
+    filter: drop-shadow(0 22px 46px rgba(231, 169, 127, 0.22));
+    animation: float 3.4s ease-in-out infinite;
+  }
+  .word {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 34px;
+    font-weight: 400;
+    letter-spacing: 0.44em;
+    padding-left: 0.44em;
+    color: var(--fg);
+  }
+  .tag {
+    margin-top: -10px;
+    font-size: 10.5px;
+    letter-spacing: 0.34em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .track {
+    margin-top: 6px;
+    width: 184px;
+    height: 2px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.07);
+  }
+  .track i {
+    display: block;
+    width: 42%;
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    animation: sweep 1.35s ease-in-out infinite;
+  }
+  .hint {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 18px;
+    text-align: center;
+    font-size: 10.5px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: rgba(242, 235, 227, 0.34);
+    transition: color 0.3s ease;
+  }
+  @keyframes sweep {
+    0% { transform: translateX(-110%); }
+    100% { transform: translateX(360%); }
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+  }
 </style>
 </head>
 <body>
-  <div class="disc"></div>
-  <div class="title">WHISKY</div>
-  <div class="sub">tuning your library</div>
+  <div class="drag-region"></div>
+  <div class="chrome" id="chrome">
+    <button type="button" id="minimize" title="Minimize" aria-label="Minimize window">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+        <path d="M2.5 6h7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+      </svg>
+    </button>
+    <button type="button" id="close" class="close" title="Close" aria-label="Close window">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+        <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+      </svg>
+    </button>
+  </div>
+
+  <div class="stage">
+    <svg class="mark" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <linearGradient id="s-tile" x1="10" y1="4" x2="54" y2="60" gradientUnits="userSpaceOnUse">
+          <stop stop-color="#262031" />
+          <stop offset="1" stop-color="#14111A" />
+        </linearGradient>
+        <linearGradient id="s-peach" x1="20" y1="16" x2="44" y2="48" gradientUnits="userSpaceOnUse">
+          <stop stop-color="#F7CBA9" />
+          <stop offset="1" stop-color="#E09A6C" />
+        </linearGradient>
+        <radialGradient id="s-glow" cx="0" cy="0" r="1" gradientTransform="translate(18 12) rotate(48) scale(36)" gradientUnits="userSpaceOnUse">
+          <stop stop-color="#F0B48C" stop-opacity="0.34" />
+          <stop offset="1" stop-color="#F0B48C" stop-opacity="0" />
+        </radialGradient>
+        <radialGradient id="s-cool" cx="0" cy="0" r="1" gradientTransform="translate(56 58) rotate(-125) scale(30)" gradientUnits="userSpaceOnUse">
+          <stop stop-color="#9C8BD4" stop-opacity="0.22" />
+          <stop offset="1" stop-color="#9C8BD4" stop-opacity="0" />
+        </radialGradient>
+      </defs>
+      <rect width="64" height="64" rx="18" fill="url(#s-tile)" />
+      <rect width="64" height="64" rx="18" fill="url(#s-glow)" />
+      <rect width="64" height="64" rx="18" fill="url(#s-cool)" />
+      <circle cx="32" cy="32" r="19" stroke="url(#s-peach)" stroke-width="4.5" />
+      <circle cx="32" cy="32" r="12.5" stroke="#9C8BD4" stroke-opacity="0.62" stroke-width="2" />
+      <circle cx="32" cy="32" r="3.2" fill="#F2EBE3" />
+      <path d="M32 13.2v3.8" stroke="#F7CBA9" stroke-width="3" stroke-linecap="round" />
+    </svg>
+    <div class="word">WHISKY</div>
+    <div class="tag">Tuning your library</div>
+    <div class="track"><i></i></div>
+  </div>
+  <div class="hint" id="hint">Warming up the turntable</div>
+
+  <script>
+    (function () {
+      var controls = window.whiskyDesktop && window.whiskyDesktop.windowControls;
+      var chrome = document.getElementById('chrome');
+      if (!controls) {
+        chrome.style.display = 'none';
+      } else {
+        document.getElementById('minimize').addEventListener('click', function () { controls.minimize(); });
+        document.getElementById('close').addEventListener('click', function () { controls.close(); });
+      }
+      var slowTimer = setTimeout(function () {
+        var hint = document.getElementById('hint');
+        if (hint) hint.textContent = 'Still tuning - this can take a few seconds';
+      }, 9000);
+      window.addEventListener('beforeunload', function () { clearTimeout(slowTimer); });
+    })();
+  </script>
 </body>
 </html>

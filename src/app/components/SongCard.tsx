@@ -62,7 +62,7 @@ export function SongCard(props: SongCardProps) {
   if (loading) {
     return (
       <div className="relative group" aria-busy="true" aria-label="Loading song card">
-        <div className="relative overflow-hidden aspect-square mb-4 rounded-3xl bg-white/5 border border-white/10">
+        <div className="relative overflow-hidden aspect-square mb-4 rounded-3xl bg-card/50 border border-border/70">
           <UiSkeleton className="absolute inset-0 rounded-3xl" />
           <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent" />
           <div className="absolute top-4 right-4">
@@ -72,7 +72,7 @@ export function SongCard(props: SongCardProps) {
             <UiSkeleton className="w-16 h-16 rounded-full" />
           </div>
         </div>
-        <div className="mt-1 space-y-3 px-1 min-h-[72px] rounded-2xl border border-white/5 bg-white/5 p-3">
+        <div className="mt-1 space-y-3 px-1 min-h-[72px] rounded-2xl border border-border/40 bg-card/50 p-3">
           <UiSkeleton className="h-4 w-11/12 rounded-full bg-white/25 dark:bg-white/25" />
           <UiSkeleton className="h-3 w-4/5 rounded-full bg-white/18 dark:bg-white/18" />
           <div className="flex items-center gap-2 pt-1">
@@ -110,7 +110,7 @@ export function SongCard(props: SongCardProps) {
             className={`w-16 h-16 rounded-full flex items-center justify-center shadow-2xl ${
                 isPlayable
                   ? 'bg-accent text-accent-foreground'
-                  : 'bg-white/20 text-white'
+                  : 'bg-secondary/80 text-white'
               }`}
             onClick={(e) => {
               e.stopPropagation();

@@ -3,10 +3,23 @@ import dotenv from 'dotenv';
 // In packaged builds main.cjs sets DOTENV_CONFIG_PATH to the .env shipped via extraResources;
 // in dev it falls back to dotenv's default cwd lookup.
 const envPath = process.env.DOTENV_CONFIG_PATH;
-// Never let the bundled .env override variables passed by the Electron main process
-// (notably RESEND_API_PORT): a fixed port in .env would defeat the port-fallback logic
-// and leave the app without a backend when that port is taken.
-dotenv.config({ path: envPath || undefined });
+// The app's own .env is authoritative (it ships the real OpenRouter/Supabase keys).
+// A stale OPENROUTER_API_KEY left in the user's system environment used to shadow it
+// and make the AI curator fail with 401s, so load .env with override enabled.
+// Runtime values injected by the Electron main process (port, static dir, yt-dlp
+// path, node shim) must still win — otherwise a fixed port in .env would defeat the
+// port-fallback logic and leave the app without a backend.
+const runtimeInjected = {
+  RESEND_API_PORT: process.env.RESEND_API_PORT,
+  WHISKY_STATIC_DIR: process.env.WHISKY_STATIC_DIR,
+  YTDLP_PATH: process.env.YTDLP_PATH,
+  DOTENV_CONFIG_PATH: process.env.DOTENV_CONFIG_PATH,
+  ELECTRON_RUN_AS_NODE: process.env.ELECTRON_RUN_AS_NODE,
+};
+dotenv.config({ path: envPath || undefined, override: true });
+for (const [key, value] of Object.entries(runtimeInjected)) {
+  if (value !== undefined) process.env[key] = value;
+}
 import YTMusic from 'ytmusic-api';
 const ytmusic = new YTMusic();
 import { appendFile, mkdir } from 'node:fs/promises';
@@ -21,7 +34,7 @@ const serverDir = path.dirname(fileURLToPath(import.meta.url));
 // --- YouTube Enrichment Layer for iTunes Results ---
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
 if (!YOUTUBE_API_KEY) {
-  console.warn('âš ï¸ Missing YOUTUBE_API_KEY');
+  console.warn('⚠️ Missing YOUTUBE_API_KEY');
 }
 const youtubeCache = new Map(); // key: `${title}|${artist}`
 
@@ -74,7 +87,7 @@ async function searchYouTubeHtmlForSong(title, artist) {
   }
 }
 
-// Reuse a single ytmusic init promise â€” calling .initialize() repeatedly is wasteful.
+// Reuse a single ytmusic init promise — calling .initialize() repeatedly is wasteful.
 let ytmusicReadyPromise = null;
 async function ensureYtMusicReady() {
   if (!ytmusicReadyPromise) {
@@ -116,22 +129,90 @@ async function isVideoEmbeddable(videoId) {
       console.warn('[EmbedCheck] fetch failed:', err && err.message ? err.message : err);
     }
   }
-  // API unavailable (quota/key/network) â€” optimistically allow it. The player's
+  // API unavailable (quota/key/network) — optimistically allow it. The player's
   // own onError retry loop is the safety net.
   return true;
 }
 
-async function searchYTMusicForSong(title, artist) {
+// "PT5M32S" / "PT33S" / "PT1H2M3S" -> seconds. Returns null when unparseable.
+function parseIsoDuration(value) {
+  if (typeof value !== 'string') return null;
+  const match = value.match(/^P(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$/);
+  if (!match) return null;
+  const hours = Number(match[1] || 0);
+  const minutes = Number(match[2] || 0);
+  const seconds = Number(match[3] || 0);
+  const total = hours * 3600 + minutes * 60 + seconds;
+  return total > 0 ? total : null;
+}
+
+// One videos.list call (1 quota unit) for the shortlisted search results. Search results
+// themselves carry no duration, which is how a 30-second Short could be picked for a
+// 5-minute song and then "finish" after 30s.
+async function fetchYouTubeDurations(videoIds) {
+  const durations = new Map();
+  if (!YOUTUBE_API_KEY || videoIds.length === 0) return durations;
+  try {
+    const res = await fetch(
+      `https://www.googleapis.com/youtube/v3/videos?part=contentDetails&id=${videoIds.join(',')}&key=${YOUTUBE_API_KEY}`,
+    );
+    const data = await res.json();
+    for (const item of data?.items ?? []) {
+      const seconds = parseIsoDuration(item?.contentDetails?.duration);
+      if (seconds) durations.set(item.id, seconds);
+    }
+  } catch (err) {
+    console.warn('[YouTubeDurations] failed:', err && err.message ? err.message : err);
+  }
+  return durations;
+}
+
+function durationTolerance(expectedSeconds) {
+  if (!Number.isFinite(expectedSeconds) || expectedSeconds <= 0) return 90;
+  return Math.max(20, Math.min(90, expectedSeconds * 0.2));
+}
+
+function titleMatchesSong(videoTitle, songTitle) {
+  if (!videoTitle || !songTitle) return false;
+  const normalize = (value) =>
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9\u0900-\u097f]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  const wanted = normalize(songTitle);
+  const actual = normalize(videoTitle);
+  if (!wanted || !actual) return false;
+  if (actual.includes(wanted)) return true;
+  const words = wanted.split(' ').filter((word) => word.length > 2);
+  if (words.length === 0) return true;
+  const hits = words.filter((word) => actual.includes(word)).length;
+  return hits / words.length >= 0.6;
+}
+
+async function searchYTMusicForSong(title, artist, expectedDuration) {
   try {
     await ensureYtMusicReady();
     const query = `${title} ${artist}`.trim();
     const results = await ytmusic.searchSongs(query);
     if (!Array.isArray(results)) return null;
-    // Walk the top results and return the first one that's actually embeddable â€”
-    // YT Music can surface videos whose owners have disabled embedding (especially
-    // major-label tracks), and those return error 150 in the IFrame player.
-    for (const candidate of results.slice(0, 5)) {
-      if (!candidate?.videoId) continue;
+    const tolerance = durationTolerance(expectedDuration);
+    // Prefer embeddable uploads and, when YT Music reports a duration, one that is
+    // close to the album runtime so we never play a clip/teaser.
+    const ranked = results
+      .slice(0, 8)
+      .filter((candidate) => candidate?.videoId)
+      .map((candidate) => {
+        const candidateDuration = Number(candidate.duration);
+        const durationDelta =
+          Number.isFinite(candidateDuration) && candidateDuration > 0
+            ? Math.abs(candidateDuration - expectedDuration)
+            : Number.MAX_SAFE_INTEGER;
+        return { candidate, durationDelta, withinTolerance: durationDelta <= tolerance };
+      })
+      .sort((a, b) => Number(b.withinTolerance) - Number(a.withinTolerance) || a.durationDelta - b.durationDelta);
+
+    for (const { candidate } of ranked) {
       if (await isVideoEmbeddable(candidate.videoId)) {
         console.log('[YTMusic] Hit (embeddable)', `${title} - ${artist}`, '->', candidate.videoId);
         return candidate.videoId;
@@ -144,12 +225,12 @@ async function searchYTMusicForSong(title, artist) {
   return null;
 }
 
-async function searchYouTubeForSong(title, artist) {
-  // Cache key prefixed v4 because v3 didn't validate embeddability â€” every cached
-  // entry might be a non-embeddable videoId.
-  const key = `v4|${title.toLowerCase().trim()}|${artist.toLowerCase().trim()}`;
+async function searchYouTubeForSong(title, artist, expectedDuration) {
+  // Cache key: v5 adds runtime-aware picking. Bucket the duration so a 30s preview and a
+  // 5:32 track don't share a cached videoId.
+  const durationBucket = Math.round((Number(expectedDuration) || 0) / 30) * 30;
+  const key = `v5|${title.toLowerCase().trim()}|${artist.toLowerCase().trim()}|${durationBucket}`;
   const now = Date.now();
-  // 1 hour cache expiry
   const cached = youtubeCache.get(key);
   if (cached && (now - cached.ts < 60 * 60 * 1000)) {
     console.log('[YouTubeCache] HIT', key, cached.videoId);
@@ -161,17 +242,57 @@ async function searchYouTubeForSong(title, artist) {
     console.warn('No YOUTUBE_API_KEY set. Falling back to HTML search.');
   } else {
     const query = encodeURIComponent(`${title} ${artist} official song`);
+    // videoDuration steers search away from Shorts/teasers for full-length songs.
+    const durationFilter =
+      Number(expectedDuration) >= 20 * 60
+        ? '&videoDuration=long'
+        : Number(expectedDuration) >= 4 * 60
+          ? '&videoDuration=medium'
+          : '';
     try {
-      console.log('[YouTubeSearch] Searching:', `${title} - ${artist}`);
-      // videoEmbeddable=true filters out videos whose owners disabled IFrame embedding â€”
-      // without this, YouTube returns matches that 401/150 in our embedded player and
-      // playback silently fails.
+      console.log('[YouTubeSearch] Searching:', `${title} - ${artist}`, 'expected=', expectedDuration);
       const res = await fetch(
-        `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${query}&type=video&videoEmbeddable=true&maxResults=1&key=${YOUTUBE_API_KEY}`
+        `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${query}&type=video&videoEmbeddable=true&maxResults=5${durationFilter}&key=${YOUTUBE_API_KEY}`,
       );
       const data = await res.json();
-      videoId = data?.items?.[0]?.id?.videoId || null;
-      console.log('[YouTubeSearch] Result:', { title, artist, videoId, data });
+      const items = data?.items ?? [];
+      const candidates = items
+        .map((item) => ({
+          videoId: item?.id?.videoId,
+          title: item?.snippet?.title,
+        }))
+        .filter((candidate) => candidate.videoId);
+      const durations = await fetchYouTubeDurations(candidates.map((candidate) => candidate.videoId));
+      const tolerance = durationTolerance(expectedDuration);
+      const ranked = candidates
+        .map((candidate, index) => {
+          const actual = durations.get(candidate.videoId);
+          const withinTolerance =
+            Number.isFinite(actual) && Number.isFinite(Number(expectedDuration))
+              ? Math.abs(actual - Number(expectedDuration)) <= tolerance
+              : false;
+          return {
+            ...candidate,
+            index,
+            titleMatch: titleMatchesSong(candidate.title, title),
+            withinTolerance,
+          };
+        })
+        .sort(
+          (a, b) =>
+            Number(b.withinTolerance) - Number(a.withinTolerance) ||
+            Number(b.titleMatch) - Number(a.titleMatch) ||
+            a.index - b.index,
+        );
+      videoId = ranked[0]?.videoId || null;
+      console.log('[YouTubeSearch] Result:', {
+        title,
+        artist,
+        videoId,
+        expected: expectedDuration,
+        actual: videoId ? durations.get(videoId) : null,
+        candidates: ranked.length,
+      });
 
       const reason = data?.error?.errors?.[0]?.reason;
       if (!videoId && reason) {
@@ -183,9 +304,7 @@ async function searchYouTubeForSong(title, artist) {
   }
 
   if (!videoId) {
-    // YT Music returns embeddable Topic-channel uploads â€” try this BEFORE the HTML
-    // scraper, which often returns non-embeddable user-uploaded music videos.
-    videoId = await searchYTMusicForSong(title, artist);
+    videoId = await searchYTMusicForSong(title, artist, expectedDuration);
   }
 
   if (!videoId) {
@@ -200,7 +319,7 @@ async function attachYouTubeIdsToSongs(songs) {
   const results = await Promise.all(
     songs.map(async (song) => {
       if (song.videoId) return song;
-      const videoId = await searchYouTubeForSong(song.title, song.artist);
+      const videoId = await searchYouTubeForSong(song.title, song.artist, song.duration);
       if (!videoId) {
         console.warn('[YouTubeEnrich] No videoId found for', song.title, '-', song.artist);
       }
@@ -1030,7 +1149,7 @@ function stripLyricsTitleNoise(value) {
       /\[(?:[^\[\]]*?(?:from|feat\.?|ft\.?|with|remaster|version|live|edit|soundtrack)[^\[\]]*?)\]/gi,
       ' ',
     )
-    .replace(/\s*[-â€“â€”]\s*(?:remaster(?:ed)?(?:\s+\d{4})?|live|radio edit|single version|from\s+.+)$/i, ' ')
+    .replace(/\s*[-–—]\s*(?:remaster(?:ed)?(?:\s+\d{4})?|live|radio edit|single version|from\s+.+)$/i, ' ')
     .replace(/\s+(?:feat\.?|ft\.?|with)\s+.+$/i, ' ')
     .replace(/\s{2,}/g, ' ')
     .trim();
@@ -1125,7 +1244,7 @@ async function fetchLrclibLyrics(songTitle, artistName = '') {
         return exactMetadata;
       }
 
-      // 2) Fuzzy search fallback â€” prefer the best title/artist match with synced lyrics.
+      // 2) Fuzzy search fallback — prefer the best title/artist match with synced lyrics.
       const searchUrl = new URL('https://lrclib.net/api/search');
       searchUrl.searchParams.set('track_name', attempt.track);
       if (attempt.artist) searchUrl.searchParams.set('artist_name', attempt.artist);
@@ -2229,6 +2348,9 @@ app.get('/api/health', (_req, res) => {
     ok: true,
     apiVersion: 2,
     service: 'resend-api',
+    // Lets the packaged app tell its own API apart from a stray dev API that has no
+    // bundled UI to serve (reusing one of those used to leave the splash stuck).
+    ui: Boolean(process.env.WHISKY_STATIC_DIR),
     mailReady,
     resetReady,
   });
@@ -2419,10 +2541,11 @@ app.get('/api/resolve-alt', async (req, res) => {
   const artist = typeof req.query.artist === 'string' ? req.query.artist.trim() : '';
   const excludeRaw = typeof req.query.exclude === 'string' ? req.query.exclude : '';
   const exclude = new Set(excludeRaw.split(',').map((s) => s.trim()).filter(Boolean));
+  const expectedDuration = Number(req.query.duration) || 0;
   if (!title) return res.status(400).json({ error: 'title is required' });
   try {
     const query = `${title} ${artist}`.trim();
-    // Collect candidates from both sources first â€” a ytmusic outage used to skip
+    // Collect candidates from both sources first — a ytmusic outage used to skip
     // the HTML fallback entirely (shared try/catch) and return nothing.
     const candidates = [];
     const seen = new Set();
@@ -2436,9 +2559,31 @@ app.get('/api/resolve-alt', async (req, res) => {
       await ensureYtMusicReady();
       const results = await ytmusic.searchSongs(query);
       if (Array.isArray(results)) {
-        // Pull more results than usual so we have something to try after a few failures.
-        for (const candidate of results.slice(0, 15)) {
-          push(candidate?.videoId, 'ytmusic');
+        // Prefer results whose runtime matches the song — this is the path the player
+        // takes after detecting a 30-second teaser, so returning another teaser would
+        // just burn through retries.
+        const tolerance = durationTolerance(expectedDuration);
+        const ranked = results
+          .slice(0, 15)
+          .filter((candidate) => candidate?.videoId)
+          .map((candidate) => {
+            const duration = Number(candidate.duration) || 0;
+            const delta =
+              expectedDuration > 0 && duration > 0
+                ? Math.abs(duration - expectedDuration)
+                : Number.MAX_SAFE_INTEGER;
+            return {
+              videoId: candidate.videoId,
+              withinTolerance: expectedDuration > 0 && duration > 0 && delta <= tolerance,
+              delta,
+            };
+          })
+          .sort(
+            (a, b) =>
+              Number(b.withinTolerance) - Number(a.withinTolerance) || a.delta - b.delta,
+          );
+        for (const candidate of ranked) {
+          push(candidate.videoId, 'ytmusic');
         }
       }
     } catch (err) {
@@ -2455,13 +2600,13 @@ app.get('/api/resolve-alt', async (req, res) => {
         return res.json({ videoId: candidate.videoId, source: candidate.source });
       }
     }
-    // Nothing embeddable â€” hand back an untried candidate anyway. yt-dlp extracts
+    // Nothing embeddable — hand back an untried candidate anyway. yt-dlp extracts
     // audio regardless of embed restrictions, so the direct-audio path plays it;
     // if extraction fails the client's onError loop excludes it and retries.
     if (candidates.length > 0) {
       return res.json({ videoId: candidates[0].videoId, source: `${candidates[0].source}-any` });
     }
-    // Always 200 â€” the client distinguishes "endpoint missing" from "no result" by
+    // Always 200 — the client distinguishes "endpoint missing" from "no result" by
     // checking whether videoId is null. 404 here gets misread as a route bug.
     return res.json({ videoId: null, source: 'none' });
   } catch (err) {
@@ -2469,7 +2614,7 @@ app.get('/api/resolve-alt', async (req, res) => {
   }
 });
 
-// Cache extracted audio URLs â€” googlevideo URLs expire after a few hours, so cap TTL
+// Cache extracted audio URLs — googlevideo URLs expire after a few hours, so cap TTL
 // well below that. Avoids re-running yt-dlp for the same videoId on every play.
 const audioUrlCache = new Map();
 const AUDIO_URL_TTL_MS = 90 * 60 * 1000; // 90 min, googlevideo signs expire ~6h
@@ -2562,7 +2707,7 @@ app.get('/api/audio-stream', async (req, res) => {
   }
 });
 
-// YT Music search â€” returns music-only results and incorporates relatedness/popularity
+// YT Music search — returns music-only results and incorporates relatedness/popularity
 // signal that iTunes search lacks. Used to enrich the recommendation candidate pool.
 const ytmusicSearchCache = new Map();
 const YTMUSIC_SEARCH_TTL_MS = 30 * 60 * 1000;
@@ -2805,7 +2950,7 @@ app.post('/api/ai-curator/chat', aiLimiter, async (req, res) => {
 
     if (!openRouterApiKey) {
       return res.status(503).json({
-        error: 'AI curator is not configured. Add OPENROUTER_API_KEY to your environment.',
+        error: 'Maestro is not configured. Add OPENROUTER_API_KEY to your environment.',
       });
     }
 
@@ -2814,15 +2959,15 @@ app.post('/api/ai-curator/chat', aiLimiter, async (req, res) => {
     const compactRecent = Array.isArray(recentSongs) ? recentSongs.slice(0, 12).map(compactSong).filter(Boolean) : [];
 
     const systemPrompt = [
-      'You are a friendly and knowledgeable music curator named "Whisky".',
+      'You are "Maestro", a friendly and knowledgeable music curator inside the Whisky Music app.',
       `Respond ONLY in ${safeResponseLanguage}. ${
         safeResponseLanguage === 'Hindi'
-          ? 'Use natural conversational Hindi in Devanagari script for responseText, facts, and the playlist name and description. Keep proper nouns (artist names, song titles) in their original spelling â€” do NOT transliterate them. Use Hinglish only if a word has no common Devanagari equivalent.'
+          ? 'Use natural conversational Hindi in Devanagari script for responseText, facts, and the playlist name and description. Keep proper nouns (artist names, song titles) in their original spelling — do NOT transliterate them. Use Hinglish only if a word has no common Devanagari equivalent.'
           : 'Use natural conversational English.'
       }`,
       'You ONLY discuss music, songs, artists, albums, genres, music history, music industry, soundtracks, and movies/films when relevant to their soundtrack or featured songs.',
       'You DO NOT answer questions outside of these topics. If a user asks anything off-topic (general trivia, news, math, code, personal advice, weather, politics, religion, etc.), respond politely declining and steer them back to music with an example question.',
-      'Return STRICT JSON only â€” no markdown fences, no commentary outside the JSON.',
+      'Return STRICT JSON only — no markdown fences, no commentary outside the JSON.',
       'Schema:',
       '{',
       '  "intent": "facts" | "playlist" | "explain" | "chat" | "off_topic",',
@@ -2840,7 +2985,7 @@ app.post('/api/ai-curator/chat', aiLimiter, async (req, res) => {
       '- Use "playlist" with 8-12 real, popular songs by named real artists when the user wants a mix, vibe, recommendation, or movie-soundtrack-style mix. Mix well-known and adjacent picks. Match the user\'s preferred languages and the current/recent listening when context is given.',
       '- Movies/films are in scope ONLY for their music: soundtrack, score, featured songs, composer, music director, playback singers. Decline questions about plot, cast, reviews, etc.',
       '- For chit-chat or short music clarifications, set facts=[] and playlist=null.',
-      '- Never include track ids â€” only title and artist as the listener would type them.',
+      '- Never include track ids — only title and artist as the listener would type them.',
       '- Keep responseText warm, concrete, and short.',
     ].join('\n');
 
@@ -2960,7 +3105,7 @@ app.post('/api/ai-curator/chat', aiLimiter, async (req, res) => {
 });
 
 // Serve the packaged UI from this server when WHISKY_STATIC_DIR is set so the renderer
-// loads from http://localhost (a real http origin) instead of file:// â€” required for the
+// loads from http://localhost (a real http origin) instead of file:// — required for the
 // YouTube IFrame postMessage handshake to accept play/pause commands.
 const staticDir = process.env.WHISKY_STATIC_DIR;
 if (staticDir) {

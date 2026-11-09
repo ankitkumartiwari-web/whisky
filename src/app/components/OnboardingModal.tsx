@@ -213,7 +213,7 @@ export function OnboardingModal({ isOpen, displayName, onComplete, onSkip }: Onb
                   <button
                     type="button"
                     onClick={() => setStep((s) => Math.max(0, s - 1))}
-                    className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm hover:bg-white/10"
+                    className="inline-flex items-center gap-2 rounded-full border border-border bg-card/50 px-4 py-2 text-sm hover:bg-secondary/70"
                   >
                     <ArrowLeft className="h-4 w-4" /> Back
                   </button>
@@ -231,7 +231,7 @@ export function OnboardingModal({ isOpen, displayName, onComplete, onSkip }: Onb
                   <button
                     type="button"
                     onClick={handleFinish}
-                    className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-5 py-2 text-sm font-semibold text-[#0A0A0A] transition-colors hover:bg-[var(--accent)]"
+                    className="inline-flex items-center gap-2 rounded-full bg-[var(--accent)] px-5 py-2 text-sm font-semibold text-accent-foreground transition-colors hover:brightness-105"
                   >
                     Get my mix <Sparkles className="h-4 w-4" />
                   </button>

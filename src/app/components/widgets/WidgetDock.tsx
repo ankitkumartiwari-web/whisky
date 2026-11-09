@@ -30,7 +30,7 @@ export function WidgetDock({ activeWidgetIds, onReorder, onRemove, ctx }: Widget
     <motion.aside
       initial={{ x: -32, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
-      className="fixed left-20 top-28 bottom-28 z-40 w-[280px] overflow-y-auto px-3 py-3"
+      className="fixed left-24 top-32 bottom-32 z-40 w-[280px] overflow-y-auto px-3 py-3"
       style={{ backgroundColor: dockBg, borderRight: `1px solid ${borderCol}` }}
     >
       <div

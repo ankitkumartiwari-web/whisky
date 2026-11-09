@@ -287,7 +287,7 @@ export function MoodView({ preferredLanguages, onPlaySong, onLikeSong, likedSong
                     <p className="text-base font-medium text-white">{mood.label}</p>
                     <p className="mt-1 text-xs text-white/85">{mood.description}</p>
                   </div>
-                  <div className="rounded-full bg-white/20 p-2 backdrop-blur-sm">
+                  <div className="rounded-full bg-secondary/80 p-2 backdrop-blur-sm">
                     <Icon className="h-4 w-4 text-white" />
                   </div>
                 </div>

@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Whisky Music</title>
+<style>
+  :root {
+    --bg: #14111a;
+    --fg: #f2ebe3;
+    --muted: #9a8faa;
+    --accent: #e7a97f;
+    --border: rgba(255, 255, 255, 0.1);
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background: radial-gradient(1000px 640px at 50% 24%, #1e1829 0%, var(--bg) 62%);
+    color: var(--fg);
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    user-select: none;
+  }
+  .drag-region { position: fixed; inset: 0 0 auto 0; height: 54px; -webkit-app-region: drag; }
+  .chrome {
+    position: fixed;
+    top: 12px;
+    right: 14px;
+    z-index: 5;
+    display: flex;
+    gap: 6px;
+    -webkit-app-region: no-drag;
+  }
+  .chrome button {
+    width: 30px;
+    height: 30px;
+    display: grid;
+    place-items: center;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(242, 235, 227, 0.68);
+    cursor: pointer;
+    padding: 0;
+    transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  }
+  .chrome button:hover { background: rgba(255, 255, 255, 0.1); color: var(--fg); }
+  .chrome button.close:hover { background: #e5484d; border-color: #e5484d; color: #fff; }
+  .stage {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    -webkit-app-region: drag;
+  }
+  .card {
+    width: min(460px, 100%);
+    padding: 32px 30px 26px;
+    border-radius: 24px;
+    border: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.035);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4);
+    text-align: center;
+    -webkit-app-region: no-drag;
+  }
+  .mark { width: 56px; height: 56px; border-radius: 16px; margin-bottom: 18px; }
+  h1 {
+    margin: 0 0 8px;
+    font-family: Georgia, 'Times New Roman', serif;
+    font-weight: 400;
+    font-size: 26px;
+    letter-spacing: 0.02em;
+  }
+  p { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.55; }
+  .actions { display: flex; gap: 10px; justify-content: center; margin-top: 22px; }
+  button.action {
+    border-radius: 999px;
+    padding: 10px 20px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: filter 0.15s ease, background 0.15s ease, color 0.15s ease;
+  }
+  button.primary { background: var(--accent); color: #2a1d17; }
+  button.primary:hover { filter: brightness(1.06); }
+  button.ghost { background: transparent; border-color: var(--border); color: var(--fg); }
+  button.ghost:hover { background: rgba(255, 255, 255, 0.07); }
+  .foot { margin-top: 16px; font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(242, 235, 227, 0.3); }
+</style>
+</head>
+<body>
+  <div class="drag-region"></div>
+  <div class="chrome">
+    <button type="button" id="minimize" title="Minimize" aria-label="Minimize window">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+        <path d="M2.5 6h7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+      </svg>
+    </button>
+    <button type="button" id="close" class="close" title="Close" aria-label="Close window">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+        <path d="M3 3l6 6M9 3l-6 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+      </svg>
+    </button>
+  </div>
+
+  <div class="stage">
+    <div class="card">
+      <svg class="mark" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <defs>
+          <linearGradient id="e-tile" x1="10" y1="4" x2="54" y2="60" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#262031" />
+            <stop offset="1" stop-color="#14111A" />
+          </linearGradient>
+          <linearGradient id="e-peach" x1="20" y1="16" x2="44" y2="48" gradientUnits="userSpaceOnUse">
+            <stop stop-color="#F7CBA9" />
+            <stop offset="1" stop-color="#E09A6C" />
+          </linearGradient>
+        </defs>
+        <rect width="64" height="64" rx="18" fill="url(#e-tile)" />
+        <circle cx="32" cy="32" r="19" stroke="url(#e-peach)" stroke-width="4.5" />
+        <circle cx="32" cy="32" r="12.5" stroke="#9C8BD4" stroke-opacity="0.62" stroke-width="2" />
+        <circle cx="32" cy="32" r="3.2" fill="#F2EBE3" />
+      </svg>
+      <h1>The turntable needs a nudge</h1>
+      <p>
+        Whisky couldn't start its local music service. Another app may be using the port,
+        or the service took too long to wake up.
+      </p>
+      <div class="actions">
+        <button type="button" class="action primary" id="retry">Try again</button>
+        <button type="button" class="action ghost" id="quit">Quit</button>
+      </div>
+      <div class="foot">Your library and downloads are safe</div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var desktop = window.whiskyDesktop || {};
+      var controls = desktop.windowControls;
+      document.getElementById('minimize').addEventListener('click', function () {
+        if (controls) controls.minimize();
+      });
+      document.getElementById('close').addEventListener('click', function () {
+        if (controls) controls.close();
+      });
+      document.getElementById('quit').addEventListener('click', function () {
+        if (controls) controls.close();
+      });
+      document.getElementById('retry').addEventListener('click', function () {
+        var button = document.getElementById('retry');
+        button.disabled = true;
+        button.textContent = 'Starting…';
+        if (desktop.startup && typeof desktop.startup.retry === 'function') {
+          desktop.startup.retry();
+        } else {
+          location.reload();
+        }
+      });
+      if (!controls) {
+        document.querySelector('.chrome').style.display = 'none';
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -74,15 +74,18 @@ export interface CuratorChatInput {
 export async function chatWithCurator(
   input: CuratorChatInput,
 ): Promise<{ data?: CuratorChatResult; error?: string }> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 45_000);
   try {
     const ready = await isBackendApiAvailable();
     if (!ready) {
-      return { error: 'AI curator is offline right now. Make sure the API server is running.' };
+      return { error: 'Maestro is offline right now. Make sure the API server is running.' };
     }
 
     const response = await fetch('/api/ai-curator/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
       body: JSON.stringify({
         prompt: input.prompt,
         currentSong: input.currentSong ?? null,
@@ -98,13 +101,18 @@ export async function chatWithCurator(
 
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}));
-      const message = typeof payload?.error === 'string' ? payload.error : 'AI curator request failed.';
+      const message = typeof payload?.error === 'string' ? payload.error : 'Maestro request failed.';
       return { error: message };
     }
 
     const data = (await response.json()) as CuratorChatResult;
     return { data };
-  } catch {
-    return { error: 'Unable to reach AI curator service.' };
+  } catch (err) {
+    if ((err as Error)?.name === 'AbortError') {
+      return { error: 'Maestro took too long to answer. Try again in a moment.' };
+    }
+    return { error: 'Unable to reach Maestro right now.' };
+  } finally {
+    window.clearTimeout(timeout);
   }
 }
