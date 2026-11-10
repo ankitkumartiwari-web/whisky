@@ -3,24 +3,42 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Whisky Music - your AI music curator</title>
-  <meta name="description" content="A late-night listening lounge. Whisky Music is an open-source desktop music app with an AI curator, mood mixes, synced lyrics and collaborative rooms." />
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='18' fill='%2314111A'/><circle cx='32' cy='32' r='19' stroke='%23F0B48C' stroke-width='4.5' fill='none'/><circle cx='32' cy='32' r='12.5' stroke='%239C8BD4' stroke-opacity='.62' stroke-width='2' fill='none'/><circle cx='32' cy='32' r='3.2' fill='%23F2EBE3'/><path d='M32 13.2v3.8' stroke='%23F7CBA9' stroke-width='3' stroke-linecap='round'/></svg>" />
+  <title>Whisky Music — a late-night lounge tuned by AI</title>
+  <meta name="description" content="Whisky Music is an open-source desktop music app with Maestro, an AI curator that knows artists, songs and soundtracks. Mood mixes, synced lyrics, and listening rooms with friends." />
+  <meta name="theme-color" content="#FBF6F0" />
+  <link rel="icon" type="image/svg+xml" href="assets/brand-mark.svg" />
+  <link rel="canonical" href="https://whisky-music.netlify.app/" />
+
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Whisky Music — a late-night lounge tuned by AI" />
+  <meta property="og:description" content="An open-source desktop music app with Maestro, an AI curator for facts, playlists, mood mixes and synced lyrics." />
+  <meta property="og:image" content="https://whisky-music.netlify.app/assets/home-light.jpg" />
+  <meta property="og:url" content="https://whisky-music.netlify.app/" />
+  <meta name="twitter:card" content="summary_large_image" />
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Cormorant+Garamond:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT,WONK@9..144,300..700,0..100,0..1&family=Nunito+Sans:opsz,wght@6..12,300..800&display=swap" rel="stylesheet">
+
   <style>
     :root {
-      --bg: #0E0B07;
-      --bg-card: #16110A;
-      --bg-elev: #1F180E;
-      --fg: #F4ECDC;
-      --fg-muted: #A99878;
-      --accent: #D8A35C;
-      --accent-glow: rgba(216, 163, 92, 0.45);
-      --border: rgba(216, 163, 92, 0.12);
-      --serif: 'Cormorant Garamond', 'Playfair Display', Georgia, serif;
-      --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      --bg: #FBF6F0;
+      --bg-soft: #F5EDE3;
+      --card: #FFFCF8;
+      --ink: #2A2331;
+      --muted: #6C6179;
+      --accent: #E7A97F;
+      --accent-strong: #D08F63;
+      --peach-soft: #F3CDB4;
+      --lavender: #9C8BD4;
+      --border: #E3D8C9;
+      --dark: #14111A;
+      --dark-card: #1C1824;
+      --dark-border: #332B40;
+      --serif: 'Fraunces', Georgia, 'Times New Roman', serif;
+      --sans: 'Nunito Sans', 'Segoe UI', 'Helvetica Neue', sans-serif;
+      --shadow-soft: 0 26px 60px -34px rgba(42, 35, 49, 0.42);
+      --shadow-float: 0 44px 100px -46px rgba(42, 35, 49, 0.55);
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -28,506 +46,1099 @@
     body {
       font-family: var(--sans);
       background: var(--bg);
-      color: var(--fg);
-      line-height: 1.5;
+      color: var(--ink);
+      line-height: 1.55;
       overflow-x: hidden;
       -webkit-font-smoothing: antialiased;
     }
 
-    h1, h2, h3, .editorial { font-family: var(--serif); letter-spacing: -0.01em; font-weight: 500; }
-
-    a { color: inherit; text-decoration: none; }
-
-    /* === Ambient background === */
-    .bg-noise::before {
+    /* Warm dusk light behind the paper */
+    body::before {
       content: '';
       position: fixed; inset: 0; z-index: 0; pointer-events: none;
-      background-image: radial-gradient(circle at 20% 10%, rgba(216,163,92,0.10), transparent 50%),
-                        radial-gradient(circle at 85% 80%, rgba(216,163,92,0.08), transparent 55%);
+      background:
+        radial-gradient(900px 540px at 10% -8%, rgba(231, 169, 127, 0.26), transparent 62%),
+        radial-gradient(820px 520px at 94% 6%, rgba(156, 139, 212, 0.18), transparent 64%),
+        radial-gradient(700px 460px at 50% 108%, rgba(231, 169, 127, 0.13), transparent 70%);
+      animation: aurora 26s ease-in-out infinite alternate;
     }
-    .bg-noise::after {
+    @keyframes aurora {
+      0% { transform: translate3d(-1.5%, -1%, 0) scale(1.02); }
+      100% { transform: translate3d(1.5%, 2%, 0) scale(1.06); }
+    }
+    body::after {
       content: '';
-      position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.05;
-      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+      position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.035;
+      background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
     }
 
-    .container { max-width: 1180px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+    h1, h2, h3, .editorial {
+      font-family: var(--serif);
+      font-weight: 500;
+      font-variation-settings: 'SOFT' 100, 'WONK' 0, 'opsz' 96;
+      letter-spacing: 0.002em;
+      line-height: 1.05;
+      text-wrap: balance;
+    }
+    h4, h5, h6 { font-family: var(--sans); font-weight: 700; }
+    em { font-style: italic; }
+    a { color: inherit; text-decoration: none; }
+    img { max-width: 100%; }
+    ::selection { background: var(--peach-soft); color: var(--ink); }
 
-    /* === Header === */
-    header {
-      position: sticky; top: 0; z-index: 50;
-      backdrop-filter: blur(18px);
-      background: rgba(14, 11, 7, 0.72);
-      border-bottom: 1px solid var(--border);
+    .scroll-progress {
+      position: fixed; top: 0; left: 0; z-index: 70;
+      width: 0; height: 3px;
+      background: linear-gradient(90deg, var(--accent), var(--lavender));
+      box-shadow: 0 0 12px rgba(231, 169, 127, 0.55);
+      transition: width .1s linear;
+      pointer-events: none;
     }
-    .nav { display: flex; align-items: center; justify-content: space-between; padding: 18px 0; }
-    .brand { display: flex; align-items: center; gap: 12px; font-family: var(--serif); font-size: 22px; }
-    .brand .disc { width: 32px; height: 32px; }
-    .nav-links { display: flex; gap: 28px; align-items: center; font-size: 14px; color: var(--fg-muted); }
-    .nav-links a:hover { color: var(--fg); }
-    .nav-cta {
-      padding: 9px 18px; border-radius: 999px;
-      background: var(--accent); color: #0E0B07; font-weight: 600;
-      transition: transform .2s ease, box-shadow .2s ease;
-    }
-    .nav-cta:hover { transform: translateY(-1px); box-shadow: 0 12px 30px var(--accent-glow); }
-    .menu-toggle { display: none; background: none; border: none; color: var(--fg); font-size: 22px; cursor: pointer; }
 
-    /* === Hero === */
-    .hero { padding: 90px 0 110px; position: relative; }
-    .hero-grid {
-      display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 60px; align-items: center;
-    }
+    .container { width: 100%; max-width: 1200px; margin: 0 auto; padding: 0 28px; position: relative; z-index: 1; }
     .kicker {
-      display: inline-flex; align-items: center; gap: 10px;
-      padding: 6px 14px; border-radius: 999px;
-      background: rgba(216,163,92,0.10);
-      border: 1px solid var(--border);
-      font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
-      color: var(--accent);
+      display: inline-flex; align-items: center; gap: 9px;
+      font-size: 11px; font-weight: 700; letter-spacing: 0.2em; text-transform: uppercase;
+      color: var(--accent-strong);
     }
-    .hero h1 {
-      margin-top: 22px; font-size: clamp(48px, 7vw, 88px); line-height: 1.05;
+    .kicker::before {
+      content: ''; width: 6px; height: 6px; border-radius: 50%;
+      background: var(--accent); box-shadow: 0 0 0 4px rgba(231, 169, 127, 0.18);
+      animation: dot-pulse 3.2s ease-in-out infinite;
     }
-    .hero h1 em { color: var(--accent); font-style: italic; }
-    .hero p.lead {
-      margin-top: 22px; font-size: 18px; color: var(--fg-muted); max-width: 540px;
+    @keyframes dot-pulse {
+      0%, 100% { box-shadow: 0 0 0 4px rgba(231, 169, 127, 0.18); }
+      50% { box-shadow: 0 0 0 7px rgba(231, 169, 127, 0.07); }
     }
-    .hero-actions { margin-top: 36px; display: flex; gap: 14px; flex-wrap: wrap; }
+
+    /* ===== Header ===== */
+    header {
+      position: sticky; top: 0; z-index: 60;
+      background: rgba(251, 246, 240, 0.82);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(227, 216, 201, 0.75);
+      transition: background .3s ease, box-shadow .3s ease, border-color .3s ease;
+    }
+    header.scrolled {
+      background: rgba(251, 246, 240, 0.94);
+      border-bottom-color: rgba(227, 216, 201, 0.95);
+      box-shadow: 0 18px 40px -34px rgba(42, 35, 49, 0.45);
+    }
+    .nav { display: flex; align-items: center; justify-content: space-between; height: 76px; gap: 24px; transition: height .3s ease; }
+    header.scrolled .nav { height: 66px; }
+    .brand { display: flex; align-items: center; gap: 12px; }
+    .brand img { width: 38px; height: 38px; border-radius: 12px; box-shadow: 0 10px 24px -14px rgba(42,35,49,.55); }
+    .brand span { font-family: var(--serif); font-size: 24px; letter-spacing: -0.01em; }
+    .nav-links { display: flex; align-items: center; gap: 30px; font-size: 14px; font-weight: 600; color: var(--muted); }
+    .nav-links a { transition: color .2s ease; }
+    .nav-links a:hover { color: var(--ink); }
+    .nav-links a:not(.nav-cta) { position: relative; }
+    .nav-links a:not(.nav-cta)::after {
+      content: ''; position: absolute; left: 0; bottom: -7px;
+      width: 100%; height: 1.5px; border-radius: 2px;
+      background: var(--accent-strong);
+      transform: scaleX(0); transform-origin: left;
+      transition: transform .28s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .nav-links a:not(.nav-cta):hover::after { transform: scaleX(1); }
+    .nav-cta {
+      display: inline-flex; align-items: center; gap: 9px;
+      padding: 10px 18px; border-radius: 999px;
+      background: var(--ink); color: var(--bg); font-size: 13.5px; font-weight: 700;
+      transition: transform .2s ease, background .2s ease, box-shadow .2s ease;
+    }
+    .nav-cta:hover { transform: translateY(-1px); background: #3A3144; box-shadow: 0 16px 30px -18px rgba(42,35,49,.65); }
+    .nav-cta svg { width: 15px; height: 15px; }
+    .menu-toggle {
+      display: none; width: 42px; height: 42px; border-radius: 14px;
+      border: 1px solid var(--border); background: var(--card); color: var(--ink);
+      font-size: 18px; cursor: pointer;
+    }
+
+    /* ===== Hero ===== */
+    .hero { padding: 76px 0 54px; }
+    .hero-grid { display: grid; grid-template-columns: 0.94fr 1.06fr; gap: 58px; align-items: center; }
+    .hero-content, .hero-visual { min-width: 0; }
+    .hero h1 { margin-top: 20px; font-size: clamp(46px, 5.7vw, 78px); line-height: 1.01; }
+    .hero h1 em {
+      color: var(--accent-strong);
+      font-variation-settings: 'SOFT' 100, 'WONK' 1, 'opsz' 96;
+    }
+    .hero .lead {
+      margin-top: 22px; max-width: 560px;
+      font-size: 17.5px; line-height: 1.65; color: var(--muted);
+    }
+    .hero .lead strong { color: var(--ink); font-weight: 700; }
+    .hero-actions { margin-top: 30px; display: flex; flex-wrap: wrap; gap: 12px; }
     .btn {
-      display: inline-flex; align-items: center; gap: 10px;
-      padding: 14px 22px; border-radius: 999px; font-weight: 600; font-size: 14px;
-      border: 1px solid transparent;
+      display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+      padding: 14px 22px; border-radius: 999px;
+      border: 1px solid transparent; cursor: pointer;
+      font-family: var(--sans); font-size: 14px; font-weight: 700;
       transition: transform .2s ease, box-shadow .2s ease, background .2s ease, border-color .2s ease;
-      cursor: pointer;
     }
-    .btn-primary {
-      background: var(--accent); color: #0E0B07;
+    .btn svg { width: 17px; height: 17px; }
+    .btn-primary { position: relative; overflow: hidden; background: var(--ink); color: var(--bg); box-shadow: 0 18px 34px -22px rgba(42,35,49,.7); }
+    .btn-primary::after {
+      content: ''; position: absolute; inset: 0; pointer-events: none;
+      background: linear-gradient(115deg, transparent 32%, rgba(255, 255, 255, 0.18) 50%, transparent 68%);
+      transform: translateX(-130%);
+      transition: transform .7s cubic-bezier(0.22, 1, 0.36, 1);
     }
-    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 18px 40px var(--accent-glow); }
-    .btn-ghost {
-      background: transparent; color: var(--fg);
-      border-color: var(--border);
+    .btn-primary:hover::after { transform: translateX(130%); }
+    .btn-primary:hover { transform: translateY(-2px); background: #3A3144; box-shadow: 0 24px 44px -22px rgba(42,35,49,.7); }
+    .btn-ghost { background: rgba(255, 252, 248, 0.6); border-color: var(--border); color: var(--ink); }
+    .btn-ghost:hover { transform: translateY(-2px); background: var(--card); border-color: #D4C5B2; }
+    .hero-meta {
+      margin-top: 18px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px;
+      font-size: 12px; color: var(--muted);
     }
-    .btn-ghost:hover { background: rgba(216,163,92,0.06); border-color: var(--accent); }
-    .btn svg { width: 16px; height: 16px; }
+    .hero-meta span { display: inline-flex; align-items: center; gap: 7px; }
+    .hero-meta span + span::before { content: '·'; color: #B9AB99; }
+    .hero-meta b { color: var(--ink); font-weight: 700; }
 
-    /* === Hero visual === */
-    .hero-visual { position: relative; display: flex; align-items: center; justify-content: center; }
-    .vinyl {
-      width: 360px; height: 360px; border-radius: 50%;
-      background: radial-gradient(circle at 50% 50%, #1B1308 0%, #0E0B07 60%);
+    .hero-visual { position: relative; isolation: isolate; }
+    .hero-vinyl {
+      position: absolute; top: -40px; right: -26px; z-index: 0;
+      width: 132px; aspect-ratio: 1; border-radius: 50%;
+      background: radial-gradient(circle at 50% 50%,
+        #F0B48C 0 14%,
+        #FBF6F0 14% 15.5%,
+        #D08F63 15.5% 17%,
+        #1A1622 17% 19%,
+        #14111A 19% 100%);
+      box-shadow:
+        0 26px 50px -18px rgba(20, 17, 26, 0.6),
+        0 0 0 1px rgba(240, 180, 140, 0.28),
+        0 0 42px rgba(240, 180, 140, 0.16);
+      animation: vinyl-spin 16s linear infinite;
+    }
+    .hero-vinyl::before {
+      content: ''; position: absolute; inset: 0; border-radius: 50%;
+      background:
+        repeating-radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.1) 0 1px, transparent 1px 3.5px),
+        conic-gradient(from 20deg,
+          transparent 0 40deg,
+          rgba(255, 255, 255, 0.26) 62deg,
+          transparent 88deg 190deg,
+          rgba(240, 180, 140, 0.18) 220deg,
+          transparent 250deg 360deg);
+      mix-blend-mode: screen;
+    }
+    .hero-vinyl::after {
+      content: ''; position: absolute; left: 50%; top: 50%;
+      width: 24px; height: 24px; border-radius: 50%;
+      transform: translate(-50%, -50%);
+      background: radial-gradient(circle, #FBF6F0 0 26%, #2A2331 27% 58%, transparent 59%);
+    }
+    @keyframes vinyl-spin { to { transform: rotate(360deg); } }
+    .hero-visual::before {
+      content: ''; position: absolute; inset: -12% -8% -16% -6%; z-index: -1;
+      background:
+        radial-gradient(closest-side, rgba(231, 169, 127, 0.5), transparent 70%),
+        radial-gradient(closest-side at 80% 70%, rgba(156, 139, 212, 0.34), transparent 70%);
+      filter: blur(30px);
+    }
+    .app-frame {
+      position: relative; z-index: 1; overflow: hidden;
+      border-radius: 26px;
+      background: #fff;
+      border: 1px solid rgba(42, 35, 49, 0.14);
+      box-shadow:
+        0 56px 110px -48px rgba(42, 35, 49, 0.62),
+        0 22px 46px -34px rgba(42, 35, 49, 0.45),
+        inset 0 1px 0 rgba(255, 255, 255, 0.9);
+      transform: rotate(-0.55deg);
+      transition: transform .28s ease-out;
+      will-change: transform;
+    }
+    .app-frame:hover { transform: rotate(0deg) translateY(-4px); }
+    .app-frame img { display: block; width: 100%; height: auto; }
+    .version-chip {
+      position: absolute; left: -16px; bottom: 30px; z-index: 2;
+      display: flex; align-items: center; gap: 10px;
+      padding: 11px 15px 11px 12px; border-radius: 16px;
+      background: rgba(255, 252, 248, 0.94);
       border: 1px solid var(--border);
-      position: relative; box-shadow: 0 60px 120px rgba(0,0,0,0.5), 0 0 60px rgba(216,163,92,0.15);
-      animation: spin 28s linear infinite;
+      box-shadow: var(--shadow-soft);
+      font-size: 12px; font-weight: 700; color: var(--ink);
+      backdrop-filter: blur(12px);
+      animation: chip-float 7s ease-in-out infinite;
     }
-    .vinyl::before, .vinyl::after {
-      content: ''; position: absolute; border-radius: 50%; border: 1px solid rgba(216,163,92,0.2);
+    @keyframes chip-float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-5px); }
     }
-    .vinyl::before { inset: 28px; }
-    .vinyl::after { inset: 60px; border-color: rgba(216,163,92,0.1); }
-    .vinyl-center {
-      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-      width: 80px; height: 80px; border-radius: 50%;
-      background: linear-gradient(135deg, var(--accent), #B07D3F);
+    .version-chip .disc {
+      width: 30px; height: 30px; border-radius: 9px; overflow: hidden; flex-shrink: 0;
+      display: grid; place-items: center; background: var(--dark);
+    }
+    .version-chip .disc img { width: 22px; height: 22px; }
+    .version-chip small { display: block; font-size: 10px; font-weight: 600; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; }
+
+    /* ===== Marquee strip ===== */
+    .marquee {
+      margin-top: 58px; position: relative; overflow: hidden;
+      border-top: 1px solid rgba(227, 216, 201, 0.8);
+      border-bottom: 1px solid rgba(227, 216, 201, 0.8);
+      background: rgba(255, 252, 248, 0.42);
+      -webkit-mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+      mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent);
+    }
+    .marquee-track {
+      display: flex; width: max-content;
+      animation: marquee-scroll 34s linear infinite;
+    }
+    .marquee:hover .marquee-track,
+    .marquee:focus-within .marquee-track { animation-play-state: paused; }
+    .marquee-group {
+      display: flex; align-items: center; gap: 48px; flex-shrink: 0;
+      padding: 19px 24px;
+    }
+    .marquee-group span {
+      display: inline-flex; align-items: center; gap: 9px;
+      font-size: 12px; font-weight: 700; letter-spacing: .04em; color: var(--muted);
+      white-space: nowrap;
+    }
+    .marquee-group svg { width: 15px; height: 15px; color: var(--accent-strong); flex-shrink: 0; }
+    @keyframes marquee-scroll {
+      from { transform: translateX(0); }
+      to { transform: translateX(-50%); }
+    }
+
+    /* ===== Sections ===== */
+    section.block { padding: 96px 0; position: relative; }
+    .section-head { max-width: 700px; margin: 0 auto 44px; text-align: center; }
+    .section-head h2 { font-size: clamp(36px, 4.6vw, 56px); margin-top: 14px; }
+    .section-head p { margin-top: 16px; color: var(--muted); font-size: 16.5px; }
+    .section-head em { color: var(--accent-strong); }
+
+    /* ===== Gallery ===== */
+    .gallery-head {
+      display: flex; justify-content: space-between; align-items: flex-end; gap: 30px;
+      margin-bottom: 30px; flex-wrap: wrap;
+    }
+    .gallery-head h2 { font-size: clamp(34px, 4.4vw, 52px); margin-top: 12px; }
+    .gallery-head p { max-width: 430px; color: var(--muted); font-size: 15.5px; }
+    .gallery-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+    .shot {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      overflow: hidden;
+      box-shadow: var(--shadow-soft);
+      transition: transform .3s cubic-bezier(0.22, 1, 0.36, 1), box-shadow .3s ease;
+    }
+    .shot:hover { transform: translateY(-5px); box-shadow: 0 38px 80px -40px rgba(42,35,49,.55); }
+    .shot, .download-item, .feature { min-width: 0; }
+    .shot .shot-img { position: relative; overflow: hidden; background: var(--bg-soft); }
+    .shot .shot-img::after {
+      content: ''; position: absolute; inset: 0; pointer-events: none;
+      background: radial-gradient(280px circle at var(--mx, 50%) var(--my, 50%), rgba(255, 255, 255, 0.24), transparent 62%);
+      opacity: 0; transition: opacity .35s ease;
+    }
+    .shot:hover .shot-img::after { opacity: 1; }
+    .shot.dark .shot-img::after {
+      background: radial-gradient(280px circle at var(--mx, 50%) var(--my, 50%), rgba(240, 180, 140, 0.18), transparent 62%);
+    }
+    .shot img { display: block; width: 100%; height: auto; aspect-ratio: 1440 / 816; object-fit: cover; transition: transform .6s cubic-bezier(0.22,1,0.36,1); }
+    .shot:hover img { transform: scale(1.012); }
+    .shot figcaption { padding: 18px 21px 21px; }
+    .shot h3 { font-size: 23px; }
+    .shot p { margin-top: 6px; color: var(--muted); font-size: 14.5px; line-height: 1.6; }
+    .shot .tag {
+      display: inline-block; margin-bottom: 10px; font-size: 10px; font-weight: 800;
+      letter-spacing: .18em; text-transform: uppercase; color: var(--accent-strong);
+    }
+    .shot.dark { background: var(--dark-card); border-color: var(--dark-border); }
+    .shot.dark .shot-img { background: var(--dark); }
+    .shot.dark figcaption { color: #F2EBE3; }
+    .shot.dark h3 { color: #F2EBE3; }
+    .shot.dark p { color: #B6AAC6; }
+    .shot.dark .tag { color: var(--peach-soft); }
+
+    /* ===== Maestro demo ===== */
+    .demo { padding: 8px 0 70px; overflow: clip; }
+    .demo::before {
+      content: 'maestro';
+      position: absolute; left: -2%; bottom: 2%;
+      font-family: var(--serif); font-size: clamp(140px, 22vw, 320px);
+      line-height: .75; letter-spacing: -0.03em;
+      color: rgba(42, 35, 49, 0.035);
+      pointer-events: none; white-space: nowrap;
+    }
+    .demo-grid { display: grid; grid-template-columns: 0.88fr 1.12fr; gap: 68px; align-items: center; position: relative; z-index: 1; }
+    .demo-copy { position: relative; }
+    .demo-copy h2 { margin-top: 14px; font-size: clamp(38px, 4.8vw, 58px); }
+    .demo-copy h2 em { color: var(--accent-strong); }
+    .demo-copy > p { margin-top: 18px; max-width: 470px; color: var(--muted); font-size: 16px; line-height: 1.65; }
+    .prompt-chips { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; margin-top: 28px; }
+    .prompt-chip {
+      display: inline-flex; align-items: center; gap: 12px;
+      padding: 11px 17px 11px 13px; border-radius: 14px;
+      border: 1px solid var(--border); background: rgba(255, 252, 248, 0.7);
+      color: var(--ink); font-family: var(--sans); font-size: 13.5px; font-weight: 600;
+      text-align: left; cursor: pointer;
+      transition: background .22s ease, border-color .22s ease, color .22s ease;
+    }
+    .prompt-chip .chip-index {
       display: grid; place-items: center;
-      box-shadow: 0 0 40px var(--accent-glow);
+      width: 25px; height: 25px; border-radius: 8px;
+      background: rgba(231, 169, 127, 0.16);
+      font-family: var(--serif); font-size: 11.5px; color: var(--accent-strong);
+      flex-shrink: 0;
     }
-    .vinyl-center::after {
-      content: ''; width: 14px; height: 14px; border-radius: 50%;
-      background: #0E0B07;
-    }
-    .glow-ring {
-      position: absolute; inset: -60px; border-radius: 50%;
-      background: conic-gradient(from 0deg, transparent, var(--accent-glow), transparent 50%, var(--accent-glow), transparent);
-      filter: blur(40px); opacity: 0.4;
-      animation: pulse 6s ease-in-out infinite;
-    }
-    @keyframes spin { from { transform: rotate(0deg);} to { transform: rotate(360deg);} }
-    @keyframes pulse { 0%,100% { opacity: 0.3; } 50% { opacity: 0.55; } }
+    .prompt-chip:hover { background: var(--card); border-color: #D4C5B2; }
+    .prompt-chip.is-active { background: linear-gradient(135deg, rgba(231,169,127,.3), rgba(156,139,212,.2)); border-color: var(--accent); }
+    .prompt-chip.is-active .chip-index { background: rgba(42,35,49,.08); color: var(--ink); }
+    .demo-note { display: flex; align-items: flex-start; gap: 8px; margin-top: 20px; font-size: 11px; line-height: 1.6; color: var(--muted); }
+    .demo-note::before { content: ''; flex-shrink: 0; width: 5px; height: 5px; margin-top: 6px; border-radius: 50%; background: var(--lavender); }
 
-    /* === Section base === */
-    section.block { padding: 100px 0; position: relative; }
-    .section-head { text-align: center; max-width: 720px; margin: 0 auto 60px; }
-    .section-head h2 { font-size: clamp(36px, 5vw, 56px); line-height: 1.05; }
-    .section-head p { margin-top: 18px; color: var(--fg-muted); font-size: 16px; }
+    .demo-window { position: relative; }
+    .chat-shell { position: relative; }
+    .chat-shell::before {
+      content: ''; position: absolute; inset: -13% -9%; z-index: 0;
+      background:
+        radial-gradient(closest-side, rgba(231, 169, 127, 0.42), transparent 70%),
+        radial-gradient(closest-side at 72% 78%, rgba(156, 139, 212, 0.34), transparent 70%);
+      filter: blur(30px);
+    }
+    .chat-window {
+      position: relative; z-index: 1; overflow: hidden;
+      border-radius: 26px; background: #1C1824; border: 1px solid #3A3048;
+      box-shadow: 0 60px 120px -55px rgba(20, 17, 26, 0.85), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+    .chat-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 14px;
+      padding: 16px 18px;
+      border-bottom: 1px solid #332B40;
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent);
+    }
+    .chat-brand { display: flex; align-items: center; gap: 11px; }
+    .chat-brand img { width: 34px; height: 34px; border-radius: 10px; }
+    .chat-brand strong { display: block; font-family: var(--serif); font-size: 19px; font-weight: 500; color: #F2EBE3; line-height: 1.15; }
+    .chat-brand span { display: block; margin-top: 1px; font-size: 8.5px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; color: #9C8BD4; }
+    .chat-status { display: inline-flex; align-items: center; gap: 7px; font-size: 9px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: #B6AAC6; white-space: nowrap; }
+    .chat-status i { width: 6px; height: 6px; border-radius: 50%; background: #93D6AA; box-shadow: 0 0 0 3px rgba(147, 214, 170, 0.12); }
+    .chat-log {
+      height: 450px; overflow-y: auto; padding: 18px;
+      display: flex; flex-direction: column; gap: 16px;
+      overscroll-behavior: contain;
+      scroll-behavior: smooth; scrollbar-width: thin; scrollbar-color: #4B3F5C transparent;
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 16px, #000 100%);
+      mask-image: linear-gradient(to bottom, transparent 0, #000 16px, #000 100%);
+    }
+    .chat-log::-webkit-scrollbar { width: 6px; }
+    .chat-log::-webkit-scrollbar-thumb { background: #4B3F5C; border-radius: 99px; }
+    .exchange { display: flex; flex-direction: column; gap: 14px; }
+    .msg { display: flex; align-items: flex-start; gap: 10px; max-width: 94%; }
+    .msg.user { align-self: flex-end; }
+    .msg-avatar {
+      width: 28px; height: 28px; flex-shrink: 0;
+      display: grid; place-items: center; border-radius: 9px;
+      background: linear-gradient(135deg, var(--peach-soft), var(--lavender));
+      color: var(--ink); font-family: var(--serif); font-size: 15px; line-height: 1;
+    }
+    .msg .bubble { min-width: 0; font-size: 13px; line-height: 1.6; color: #E5DDD3; }
+    .msg.user .bubble {
+      padding: 9px 13px; border-radius: 14px 14px 4px 14px;
+      background: rgba(240, 180, 140, 0.16); border: 1px solid rgba(240, 180, 140, 0.3);
+      color: #F7EDE3;
+    }
+    .msg-text { white-space: pre-wrap; }
+    .msg-foot { margin-top: 10px; font-size: 10.5px; color: #9E93AE; font-style: italic; }
+    .typing { display: flex; align-items: center; gap: 4px; padding: 7px 0; }
+    .typing i { width: 5px; height: 5px; border-radius: 50%; background: #F0B48C; opacity: .3; animation: typing-pulse 1.2s ease-in-out infinite; }
+    .typing i:nth-child(2) { animation-delay: .16s; }
+    .typing i:nth-child(3) { animation-delay: .32s; }
+    @keyframes typing-pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
 
-    /* === Features grid === */
-    .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+    .playlist-card {
+      margin-top: 12px; overflow: hidden;
+      background: #14111A; border: 1px solid #332B40; border-radius: 16px;
+      animation: card-in .45s ease both;
+    }
+    @keyframes card-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    .playlist-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 11px 14px;
+      font-size: 8.5px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase;
+      color: #B7A9D6; background: rgba(156, 139, 212, 0.08);
+      border-bottom: 1px solid #332B40;
+    }
+    .playlist-card ol { list-style: none; margin: 0; padding: 0; }
+    .playlist-card li { display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-top: 1px solid rgba(51, 43, 64, 0.65); }
+    .playlist-card li:first-child { border-top: 0; }
+    .track-num { width: 18px; font-family: var(--serif); font-size: 13px; color: #F0B48C; flex-shrink: 0; }
+    .track-title { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; color: #F2EBE3; }
+    .track-title small { display: block; margin-top: 1px; font-size: 10px; font-weight: 400; color: #9E93AE; }
+    .track-dur { font-size: 10px; color: #8D819F; font-variant-numeric: tabular-nums; }
+    .playlist-foot { display: flex; align-items: center; gap: 7px; padding: 9px 14px; border-top: 1px solid #332B40; font-size: 9.5px; color: #9E93AE; }
+    .playlist-foot::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+    .chat-form { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-top: 1px solid #332B40; background: #191521; }
+    .chat-form input {
+      flex: 1; min-width: 0; padding: 8px 4px; border: 0; background: transparent;
+      color: #F2EBE3; font-family: var(--sans); font-size: 12.5px; outline: none;
+    }
+    .chat-form input::placeholder { color: #8D819F; }
+    .chat-form button {
+      width: 36px; height: 36px; flex-shrink: 0; border: 0; border-radius: 50%;
+      display: grid; place-items: center; background: var(--accent); color: #2A2331;
+      cursor: pointer; transition: filter .2s ease;
+    }
+    .chat-form button:hover { filter: brightness(1.06); }
+    .chat-form button svg { width: 16px; height: 16px; }
+
+    .curator-stamp {
+      position: absolute; right: 0; bottom: 56px; z-index: 2;
+      width: 96px; height: 96px; transform: rotate(-11deg);
+      pointer-events: none;
+    }
+    .curator-stamp svg { display: block; width: 100%; height: 100%; filter: drop-shadow(0 16px 28px rgba(20, 17, 26, 0.22)); }
+    .curator-stamp .stamp-bg { fill: var(--card); }
+    .curator-stamp .stamp-ring { fill: none; stroke: rgba(208, 143, 99, 0.55); stroke-width: 1; stroke-dasharray: 2 3.5; }
+    .curator-stamp text { font-family: var(--sans); font-size: 8.5px; font-weight: 800; letter-spacing: 1.7px; fill: var(--accent-strong); }
+    .curator-stamp .stamp-center { fill: var(--accent); }
+    .curator-stamp .stamp-star { fill: var(--dark); }
+
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+    }
+
+    /* ===== Features ===== */
+    .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; counter-reset: track; }
     .feature {
-      padding: 28px; border-radius: 22px;
-      background: linear-gradient(145deg, var(--bg-card), var(--bg));
+      position: relative; overflow: hidden; counter-increment: track;
+      padding: 26px 24px 24px; border-radius: 22px;
+      background: rgba(255, 252, 248, 0.72);
       border: 1px solid var(--border);
-      transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease;
+      box-shadow: 0 18px 40px -34px rgba(42, 35, 49, 0.5);
+      transition: transform .25s ease, border-color .25s ease, box-shadow .25s ease, background .25s ease;
     }
+    .feature::before {
+      content: '0' counter(track);
+      position: absolute; top: 16px; right: 20px;
+      font-family: var(--serif); font-size: 46px; line-height: 1;
+      color: rgba(208, 143, 99, 0.13);
+      pointer-events: none;
+      transition: color .25s ease;
+    }
+    .feature:hover::before { color: rgba(208, 143, 99, 0.26); }
     .feature:hover {
-      transform: translateY(-6px);
-      border-color: rgba(216,163,92,0.35);
-      box-shadow: 0 30px 60px rgba(0,0,0,0.4);
+      transform: translateY(-4px); background: var(--card);
+      border-color: #DCCBB6; box-shadow: 0 28px 60px -40px rgba(42,35,49,.55);
     }
-    .feature .icon-wrap {
-      width: 44px; height: 44px; border-radius: 12px;
-      background: rgba(216,163,92,0.1); color: var(--accent);
-      display: grid; place-items: center; margin-bottom: 18px;
+    .feature .icon {
+      width: 44px; height: 44px; border-radius: 13px;
+      display: grid; place-items: center; margin-bottom: 16px;
+      background: linear-gradient(135deg, rgba(231, 169, 127, 0.34), rgba(156, 139, 212, 0.26));
+      border: 1px solid rgba(231, 169, 127, 0.35);
+      color: var(--ink);
     }
-    .feature h3 { font-size: 22px; margin-bottom: 8px; }
-    .feature p { color: var(--fg-muted); font-size: 14px; line-height: 1.65; }
+    .feature .icon svg { width: 21px; height: 21px; }
+    .feature h3 { font-size: 22px; margin-bottom: 6px; }
+    .feature p { color: var(--muted); font-size: 14px; line-height: 1.65; }
 
-    /* === Download section === */
+    /* ===== Download ===== */
+    .download-wrap { position: relative; }
     .download-card {
-      max-width: 880px; margin: 0 auto;
-      padding: 48px;
-      border-radius: 28px;
-      background: linear-gradient(145deg, rgba(216,163,92,0.08), rgba(14,11,7,0.6));
-      border: 1px solid rgba(216,163,92,0.25);
-      box-shadow: 0 40px 80px rgba(0,0,0,0.4);
+      position: relative; overflow: hidden;
+      border-radius: 34px;
+      background: var(--dark);
+      color: #F2EBE3;
+      padding: 54px 50px;
+      box-shadow: var(--shadow-float);
+      border: 1px solid #2A2338;
     }
-    .download-grid {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 32px;
+    .download-card::before {
+      content: ''; position: absolute; inset: -30% -10%;
+      background:
+        radial-gradient(600px 360px at 15% 0%, rgba(240, 180, 140, 0.24), transparent 65%),
+        radial-gradient(520px 420px at 100% 100%, rgba(156, 139, 212, 0.22), transparent 65%);
+      pointer-events: none;
     }
+    .download-card > * { position: relative; z-index: 1; }
+    .download-card .kicker { color: var(--peach-soft); }
+    .download-card .kicker::before { background: var(--peach-soft); box-shadow: 0 0 0 4px rgba(240,180,140,.16); }
+    .download-card h2 { margin-top: 14px; font-size: clamp(36px, 4.6vw, 56px); color: #F2EBE3; }
+    .download-card h2 em { color: #F0B48C; }
+    .download-card .sub { margin-top: 14px; color: #B6AAC6; max-width: 560px; font-size: 16px; }
+    .download-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 32px; }
     .download-item {
-      display: flex; gap: 16px; align-items: center;
-      padding: 22px; border-radius: 18px;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      transition: transform .2s ease, border-color .2s ease;
+      display: flex; gap: 16px; align-items: flex-start;
+      padding: 22px; border-radius: 20px;
+      background: rgba(28, 24, 36, 0.85);
+      border: 1px solid var(--dark-border);
+      transition: transform .2s ease, border-color .2s ease, background .2s ease;
     }
-    .download-item:hover { transform: translateY(-3px); border-color: var(--accent); }
-    .platform-icon { width: 40px; height: 40px; flex-shrink: 0; color: var(--accent); }
+    .download-item:hover { transform: translateY(-3px); border-color: #4A3F5C; background: #201B2B; }
+    .platform-icon { width: 42px; height: 42px; flex-shrink: 0; color: #F0B48C; }
     .platform-icon svg { width: 100%; height: 100%; display: block; }
-    .download-item h4 { font-family: var(--serif); font-size: 22px; margin-bottom: 4px; }
-    .download-item p { color: var(--fg-muted); font-size: 12px; }
-    .download-item .cta-row { margin-top: 10px; display: flex; gap: 10px; flex-wrap: wrap; }
-    .download-item .pill {
-      font-size: 11px; padding: 5px 10px; border-radius: 999px;
-      background: rgba(216,163,92,0.1); color: var(--accent); font-weight: 600;
+    .download-item h4 { font-family: var(--serif); font-size: 22px; font-weight: 500; margin-bottom: 3px; }
+    .download-item p { color: #B6AAC6; font-size: 12.5px; line-height: 1.55; }
+    .download-item .cta-row { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 10.5px; font-weight: 800; letter-spacing: .04em;
+      padding: 5px 10px; border-radius: 999px;
+      background: rgba(240, 180, 140, 0.13); color: #F6D3B8; border: 1px solid rgba(240,180,140,.2);
     }
+    .pill.lav { background: rgba(156, 139, 212, 0.14); color: #D9D1F0; border-color: rgba(156,139,212,.24); }
+    .download-note {
+      margin-top: 24px; color: #A095B2; font-size: 12px; line-height: 1.7;
+      padding-top: 20px; border-top: 1px solid rgba(51, 43, 64, 0.8);
+    }
+    .download-note strong { color: #F2EBE3; }
+    .download-note a { color: #F0B48C; }
+    .download-note em { color: #F2EBE3; }
 
-    /* === Open source banner === */
+    /* ===== Open source ===== */
     .os-card {
-      max-width: 980px; margin: 0 auto;
-      padding: 56px 48px; text-align: center;
-      border-radius: 28px;
-      background: radial-gradient(circle at 50% 0%, rgba(216,163,92,0.15), transparent 70%), var(--bg-card);
+      text-align: center; border-radius: 32px;
+      padding: 54px 48px;
+      background: linear-gradient(155deg, rgba(255, 252, 248, 0.9), rgba(245, 237, 227, 0.72));
       border: 1px solid var(--border);
+      box-shadow: var(--shadow-soft);
     }
-    .os-card h2 { font-size: clamp(34px, 4.5vw, 52px); }
-    .os-card p { margin-top: 14px; color: var(--fg-muted); max-width: 580px; margin-left: auto; margin-right: auto; }
-    .os-stats { margin-top: 36px; display: flex; gap: 32px; justify-content: center; flex-wrap: wrap; }
-    .os-stat { text-align: center; }
-    .os-stat .num { font-family: var(--serif); font-size: 36px; color: var(--accent); }
-    .os-stat .lbl { font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--fg-muted); margin-top: 4px; }
+    .os-card h2 { margin-top: 12px; font-size: clamp(34px, 4.4vw, 52px); }
+    .os-card h2 em { color: var(--accent-strong); }
+    .os-card > p { margin: 14px auto 0; max-width: 600px; color: var(--muted); font-size: 16px; }
+    .os-stats { margin-top: 34px; display: flex; justify-content: center; flex-wrap: wrap; gap: 18px 44px; }
+    .os-stat .num { font-family: var(--serif); font-size: 30px; color: var(--ink); }
+    .os-stat .lbl { margin-top: 2px; font-size: 10px; font-weight: 800; letter-spacing: .18em; text-transform: uppercase; color: var(--muted); }
+    .os-actions { margin-top: 32px; display: flex; justify-content: center; flex-wrap: wrap; gap: 12px; }
 
-    /* === Footer === */
-    footer {
-      padding: 50px 0 40px; border-top: 1px solid var(--border);
-      color: var(--fg-muted); font-size: 13px;
-    }
-    .foot-row { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
-    .foot-links { display: flex; gap: 22px; }
-    .foot-links a:hover { color: var(--accent); }
+    /* ===== Footer ===== */
+    footer { border-top: 1px solid rgba(227, 216, 201, 0.8); padding: 42px 0 46px; color: var(--muted); font-size: 13px; }
+    .foot-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+    .foot-brand { display: flex; align-items: center; gap: 11px; }
+    .foot-brand img { width: 30px; height: 30px; border-radius: 9px; }
+    .foot-brand span { font-family: var(--serif); font-size: 19px; color: var(--ink); }
+    .foot-links { display: flex; flex-wrap: wrap; gap: 22px; font-weight: 600; }
+    .foot-links a:hover { color: var(--ink); }
+    .foot-copy { font-size: 12px; }
 
-    /* === Reveal animations === */
-    .reveal { opacity: 0; transform: translateY(24px); transition: opacity .8s ease, transform .8s cubic-bezier(0.22, 1, 0.36, 1); }
-    .reveal.in { opacity: 1; transform: translateY(0); }
-    .reveal.delay-1 { transition-delay: 0.08s; }
-    .reveal.delay-2 { transition-delay: 0.16s; }
-    .reveal.delay-3 { transition-delay: 0.24s; }
-    .reveal.delay-4 { transition-delay: 0.32s; }
-    .reveal.delay-5 { transition-delay: 0.40s; }
-    .reveal.delay-6 { transition-delay: 0.48s; }
+    /* ===== Reveal ===== */
+    .reveal { opacity: 0; transform: translateY(22px); transition: opacity .8s ease, transform .8s cubic-bezier(0.22, 1, 0.36, 1); }
+    .reveal.in { opacity: 1; transform: none; }
+    .d1 { transition-delay: .06s; } .d2 { transition-delay: .12s; } .d3 { transition-delay: .18s; }
+    .d4 { transition-delay: .24s; } .d5 { transition-delay: .3s; } .d6 { transition-delay: .36s; }
 
     @media (prefers-reduced-motion: reduce) {
-      .vinyl { animation: none; }
-      .glow-ring { animation: none; }
+      html { scroll-behavior: auto; }
       .reveal { opacity: 1; transform: none; transition: none; }
+      .app-frame { transition: none; transform: none; }
+      body::before, .hero-vinyl, .kicker::before, .version-chip, .marquee-track,
+      .typing i, .playlist-card { animation: none !important; }
+      .chat-log { scroll-behavior: auto; }
+      .marquee {
+        -webkit-mask-image: none; mask-image: none;
+      }
+      .marquee-track { width: 100%; }
+      .marquee-group {
+        width: 100%; flex-wrap: wrap; justify-content: center;
+        gap: 14px 28px; padding: 18px 24px;
+      }
+      .marquee-group[aria-hidden="true"] { display: none; }
     }
 
-    /* === Responsive === */
-    @media (max-width: 940px) {
-      .hero { padding: 60px 0 80px; }
-      .hero-grid { grid-template-columns: 1fr; gap: 50px; text-align: center; }
-      .hero p.lead { margin-left: auto; margin-right: auto; }
-      .hero-actions { justify-content: center; }
-      .vinyl { width: 280px; height: 280px; }
+    /* ===== Responsive ===== */
+    @media (max-width: 1020px) {
+      .hero { padding-top: 56px; }
+      .hero-grid { grid-template-columns: 1fr; gap: 44px; }
+      .hero-content { text-align: center; }
+      .hero .lead { margin-left: auto; margin-right: auto; }
+      .hero-actions, .hero-meta { justify-content: center; }
+      .hero-vinyl { width: 104px; top: -24px; right: -12px; }
+      .version-chip { left: 14px; bottom: 14px; }
+      .demo { padding-top: 0; }
+      .demo-grid { grid-template-columns: 1fr; gap: 48px; }
+      .demo-copy { max-width: 620px; }
+      .curator-stamp { display: none; }
+      .demo-window { width: 100%; max-width: 640px; }
       .features { grid-template-columns: repeat(2, 1fr); }
+      .download-card { padding: 42px 34px; }
       .download-grid { grid-template-columns: 1fr; }
-      .download-card { padding: 32px; }
+      .gallery-grid { gap: 18px; }
       .os-card { padding: 40px 28px; }
     }
-    @media (max-width: 640px) {
-      .nav-links { display: none; }
+    @media (max-width: 760px) {
+      .nav-links {
+        display: none;
+      }
       .nav-links.open {
-        display: flex; flex-direction: column; gap: 14px;
-        position: absolute; top: 100%; right: 16px; left: 16px;
-        padding: 16px; border-radius: 18px;
-        background: var(--bg-card); border: 1px solid var(--border);
+        display: flex; flex-direction: column; align-items: flex-start; gap: 16px;
+        position: absolute; top: 100%; left: 16px; right: 16px;
+        padding: 18px 20px; border-radius: 20px;
+        background: var(--card); border: 1px solid var(--border);
+        box-shadow: var(--shadow-soft);
       }
       .menu-toggle { display: block; }
+      .gallery-grid { grid-template-columns: 1fr; }
+      .gallery-head { flex-direction: column; align-items: flex-start; }
       .features { grid-template-columns: 1fr; }
+      section.block { padding: 74px 0; }
+      .download-card { padding: 34px 24px; border-radius: 26px; }
+      .marquee-group { gap: 32px; padding: 16px 18px; }
+      .marquee-group span { font-size: 11.5px; }
+      .demo { padding-bottom: 56px; }
+      .demo::before { display: none; }
+      .prompt-chips { width: 100%; }
+      .prompt-chip { width: 100%; }
+      .chat-window { border-radius: 22px; }
+      .chat-head { padding: 13px 15px; }
+      .chat-log { padding: 15px; }
+      .chat-status { font-size: 8px; }
+      .msg { max-width: 100%; }
+      .curator-stamp { display: none; }
       .foot-row { flex-direction: column; text-align: center; }
-      section.block { padding: 70px 0; }
-      .vinyl { width: 220px; height: 220px; }
-      .glow-ring { inset: -40px; }
+      .foot-links { justify-content: center; }
+      .version-chip, .hero-vinyl { display: none; }
+    }
+    @media (max-width: 460px) {
+      .container { padding: 0 20px; }
+      .hero h1 { font-size: 42px; }
+      .hero .lead { font-size: 16px; }
+      .btn { width: 100%; }
+      .hero-actions { flex-direction: column; }
     }
   </style>
 </head>
-<body class="bg-noise">
+<body>
+  <div class="scroll-progress" id="scrollProgress" aria-hidden="true"></div>
 
   <!-- ===== Header ===== -->
   <header>
     <div class="container nav">
-      <div class="brand">
-        <svg class="disc" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-          <rect width="64" height="64" rx="14" fill="#0E0B07"/>
-          <circle cx="32" cy="32" r="20" stroke="#D8A35C" stroke-width="7"/>
-          <circle cx="32" cy="32" r="4.5" fill="#D8A35C"/>
-          <path d="M32 10v8" stroke="#D8A35C" stroke-width="4" stroke-linecap="round"/>
-        </svg>
+      <a class="brand" href="#top" aria-label="Whisky Music home">
+        <img src="assets/brand-mark.svg" alt="" width="38" height="38" />
         <span>Whisky</span>
-      </div>
-      <nav class="nav-links" id="navLinks">
+      </a>
+      <nav class="nav-links" id="navLinks" aria-label="Main">
+        <a href="#screens">Screens</a>
         <a href="#features">Features</a>
         <a href="#download">Download</a>
-        <a href="#opensource">Open Source</a>
+        <a href="#opensource">Open source</a>
         <a class="nav-cta" href="https://github.com/ankitkumartiwari-web/whisky" target="_blank" rel="noopener">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.6.5.5 5.6.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2.9-.3 2-.4 3-.4s2.1.1 3 .4c2.3-1.5 3.3-1.2 3.3-1.2.7 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.5-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.6 18.4.5 12 .5z"/></svg>
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.6.5.5 5.6.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2.9-.3 2-.4 3-.4s2.1.1 3 .4c2.3-1.5 3.3-1.2 3.3-1.2.7 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.5-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.6 18.4.5 12 .5z"/></svg>
           GitHub
         </a>
       </nav>
-      <button class="menu-toggle" id="menuToggle" aria-label="Toggle menu">☰</button>
+      <button class="menu-toggle" id="menuToggle" aria-label="Toggle menu" aria-expanded="false">☰</button>
     </div>
   </header>
 
-  <!-- ===== Hero ===== -->
-  <section class="hero">
-    <div class="container hero-grid">
-      <div>
-        <span class="kicker reveal">
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.39 7.36H22l-6.18 4.49L18.21 21 12 16.51 5.79 21l2.39-7.15L2 9.36h7.61z"/></svg>
-          Open Source · Mac & Windows
-        </span>
-        <h1 class="reveal delay-1">A late‑night<br/><em>music lounge</em><br/>tuned by AI.</h1>
-        <p class="lead reveal delay-2">
-          Whisky is a desktop music app with an AI curator that knows artists, songs and soundtracks.
-          Mood mixes that match your language. Lyrics that scroll with the song. Listening rooms with friends.
-        </p>
-        <div class="hero-actions reveal delay-3">
-          <a class="btn btn-primary" href="#download">
-            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 16l-5-5h3V4h4v7h3l-5 5zm-7 4h14v-2H5v2z"/></svg>
-            Download for free
-          </a>
-          <a class="btn btn-ghost" href="https://github.com/ankitkumartiwari-web/whisky" target="_blank" rel="noopener">
-            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.6.5.5 5.6.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2.9-.3 2-.4 3-.4s2.1.1 3 .4c2.3-1.5 3.3-1.2 3.3-1.2.7 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.5-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.6 18.4.5 12 .5z"/></svg>
-            View source
-          </a>
+  <main id="top">
+    <!-- ===== Hero ===== -->
+    <section class="hero">
+      <div class="container hero-grid">
+        <div class="hero-content">
+          <span class="kicker reveal">Open source · Windows</span>
+          <h1 class="reveal d1">A late-night<br/>music lounge,<br/><em>tuned by AI.</em></h1>
+          <p class="lead reveal d2">
+            Whisky is a desktop music app with <strong>Maestro</strong> — an AI curator that knows artists,
+            songs and soundtracks. Mood mixes in your language, lyrics that scroll with the song,
+            and listening rooms with friends.
+          </p>
+          <div class="hero-actions reveal d3">
+            <a class="btn btn-primary" href="https://github.com/ankitkumartiwari-web/whisky/releases/latest/download/Whisky-Music-Setup.exe">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 16l-5-5h3V4h4v7h3l-5 5zm-7 4h14v-2H5v2z"/></svg>
+              Download for Windows
+            </a>
+            <a class="btn btn-ghost" href="https://github.com/ankitkumartiwari-web/whisky" target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.6.5.5 5.6.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2.9-.3 2-.4 3-.4s2.1.1 3 .4c2.3-1.5 3.3-1.2 3.3-1.2.7 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.5-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.6 18.4.5 12 .5z"/></svg>
+              View source
+            </a>
+          </div>
+          <div class="hero-meta reveal d4">
+            <span><b>v1.1.7</b> · Windows x64</span>
+            <span>Free forever</span>
+            <span>Auto-updates</span>
+          </div>
+        </div>
+
+        <div class="hero-visual reveal d2">
+          <div class="hero-vinyl" aria-hidden="true"></div>
+          <div class="app-frame">
+            <img src="assets/home-light.jpg" width="1440" height="816" fetchpriority="high" alt="Whisky Music home screen with recommended songs, the Maestro launcher and the now-playing bar" />
+          </div>
+          <div class="version-chip">
+            <span class="disc"><img src="assets/brand-mark.svg" alt="" /></span>
+            <span>Whisky Music<small>v1.1.7 · Latest</small></span>
+          </div>
         </div>
       </div>
 
-      <div class="hero-visual reveal delay-4">
-        <div class="glow-ring"></div>
-        <div class="vinyl" aria-hidden="true">
-          <div class="vinyl-center"></div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ===== Features ===== -->
-  <section class="block" id="features">
-    <div class="container">
-      <div class="section-head">
-        <span class="kicker reveal">Why Whisky</span>
-        <h2 class="reveal delay-1">A desktop music app that <em style="color:var(--accent); font-style:italic;">listens</em> to you.</h2>
-        <p class="reveal delay-2">
-          No ads, no autoplay traps, no algorithmic noise. Just a quiet curator and a clean interface.
-        </p>
-      </div>
-
-      <div class="features">
-        <div class="feature reveal delay-1">
-          <div class="icon-wrap">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4M12 18v4M2 12h4M18 12h4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-          </div>
-          <h3>AI Curator</h3>
-          <p>Ask Whisky for facts about an artist, the backstory of a song, or a mood - get a curated, playable playlist back. Replies in English or Hindi.</p>
-        </div>
-
-        <div class="feature reveal delay-2">
-          <div class="icon-wrap">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-          </div>
-          <h3>Mood mixes</h3>
-          <p>Ten moods × your language preference. Workout in Punjabi, focus in lo-fi, sleep in Hindi ambient - every tile is one tap.</p>
-        </div>
-
-        <div class="feature reveal delay-3">
-          <div class="icon-wrap">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-          </div>
-          <h3>Synced lyrics</h3>
-          <p>Karaoke-grade timing. Lyrics auto-scroll to the line you're hearing, sourced live from the player's own clock.</p>
-        </div>
-
-        <div class="feature reveal delay-4">
-          <div class="icon-wrap">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          </div>
-          <h3>Collab listeners</h3>
-          <p>Spin up a 6-letter room code, share it with friends, see who's listening live. Powered by Supabase Realtime presence.</p>
-        </div>
-
-        <div class="feature reveal delay-5">
-          <div class="icon-wrap">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
-          </div>
-          <h3>Browse offline</h3>
-          <p>Save songs locally for offline browsing - covers, lyrics and metadata stay accessible even without internet.</p>
-        </div>
-
-        <div class="feature reveal delay-6">
-          <div class="icon-wrap">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
-          </div>
-          <h3>Personal widgets</h3>
-          <p>Pin Now Playing, Top Artists, Recent Plays, Stats and Curator Tips to your sidebar. Drag to reorder, remove anytime.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ===== Download ===== -->
-  <section class="block" id="download">
-    <div class="container">
-      <div class="section-head">
-        <span class="kicker reveal">Get it</span>
-        <h2 class="reveal delay-1">Free. Forever. <em style="color:var(--accent); font-style:italic;">Yours.</em></h2>
-        <p class="reveal delay-2">
-          One file. No installer. No ads. Double‑click and it runs.
-        </p>
-      </div>
-
-      <div class="download-card reveal delay-1">
-        <div class="download-grid">
-          <a class="download-item" href="https://github.com/ankitkumartiwari-web/whisky/releases/latest/download/Whisky-Music-Setup.exe">
-            <span class="platform-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M3 5.5L10.5 4.4v7.1H3V5.5zm0 13L10.5 19.6v-7.1H3v6zm8.5 1.2L21 21V12.5h-9.5v7.2zM11.5 4.3L21 3v8.5h-9.5V4.3z"/>
-              </svg>
+      <div class="marquee" aria-label="What's inside Whisky">
+        <div class="marquee-track">
+          <div class="marquee-group">
+            <span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+              Real full-length tracks
             </span>
-            <div>
-              <h4>Windows</h4>
-              <p>Windows 10 / 11 - installer with silent auto-updates</p>
-              <div class="cta-row">
-                <span class="pill">x64 · ~96 MB</span>
-              </div>
-            </div>
-          </a>
-          <a class="download-item" href="https://github.com/ankitkumartiwari-web/whisky/releases" target="_blank" rel="noopener">
-            <span class="platform-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/>
-              </svg>
+            <span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              English &amp; Hindi
             </span>
-            <div>
-              <h4>macOS</h4>
-              <p>Build it yourself - clone the repo and run npm run dist:mac on a Mac</p>
-              <div class="cta-row">
-                <span class="pill">Coming soon</span>
-              </div>
+            <span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              Listening rooms
+            </span>
+            <span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M7 9h10M7 13h6"/></svg>
+              Synced lyrics
+            </span>
+            <span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M8 6l-6 6 6 6M16 6l6 6-6 6"/></svg>
+              Open source on GitHub
+            </span>
+            <span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M10 10v10"/></svg>
+              Made for Windows
+            </span>
+          </div>
+          <div class="marquee-group" aria-hidden="true">
+            <span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+              Real full-length tracks
+            </span>
+            <span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+              English &amp; Hindi
+            </span>
+            <span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              Listening rooms
+            </span>
+            <span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M7 9h10M7 13h6"/></svg>
+              Synced lyrics
+            </span>
+            <span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6l-6 6 6 6M16 6l6 6-6 6"/></svg>
+              Open source on GitHub
+            </span>
+            <span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M10 10v10"/></svg>
+              Made for Windows
+            </span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Screens ===== -->
+    <section class="block" id="screens">
+      <div class="container">
+        <div class="gallery-head">
+          <div>
+            <span class="kicker reveal">Inside the lounge</span>
+            <h2 class="reveal d1">Built to feel like <em style="color:var(--accent-strong)">a record sleeve.</em></h2>
+          </div>
+          <p class="reveal d2">
+            Soft serif type, warm paper tones and a spinning vinyl cover. Every screen is the real app,
+            captured on Windows.
+          </p>
+        </div>
+
+        <div class="gallery-grid">
+          <figure class="shot dark reveal">
+            <div class="shot-img">
+              <img src="assets/home-dark.jpg" width="1440" height="816" decoding="async" alt="Whisky Music home screen in dark mode with recommended album covers and a spinning vinyl player" />
             </div>
-          </a>
-        </div>
+            <figcaption>
+              <span class="tag">Discover</span>
+              <h3>Your listening room</h3>
+              <p>A home that opens with recommendations, recent sessions and a player that stays out of the way — in light or dusk mode.</p>
+            </figcaption>
+          </figure>
 
-        <p style="text-align:center; color: var(--fg-muted); font-size: 12px; margin-top: 24px; line-height: 1.7;">
-          <strong style="color: var(--fg);">Heads up on first launch:</strong> Windows may show a SmartScreen warning -
-          click <em>More info</em> then <em>Run anyway</em>. This is normal for unsigned indie apps and only happens once per download.
-        </p>
-        <p style="text-align:center; color: var(--fg-muted); font-size: 12px; margin-top: 18px;">
-          Or browse all releases on
-          <a href="https://github.com/ankitkumartiwari-web/whisky/releases" style="color: var(--accent);" target="_blank" rel="noopener">GitHub</a>.
-          Source code: <code style="background: rgba(216,163,92,0.08); padding: 2px 8px; border-radius: 6px;">git clone https://github.com/ankitkumartiwari-web/whisky.git</code>
-        </p>
-      </div>
-    </div>
-  </section>
+          <figure class="shot reveal d1">
+            <div class="shot-img">
+              <img src="assets/maestro-light.jpg" width="1440" height="816" decoding="async" alt="Maestro AI panel answering a question about Arijit Singh with fact cards" />
+            </div>
+            <figcaption>
+              <span class="tag">Maestro</span>
+              <h3>Ask about the music</h3>
+              <p>Artist stories, song backstories or a late-night vibe. Maestro answers with facts and turns a mood into a playable playlist.</p>
+            </figcaption>
+          </figure>
 
-  <!-- ===== Open source ===== -->
-  <section class="block" id="opensource">
-    <div class="container">
-      <div class="os-card reveal">
-        <span class="kicker">100% Open Source</span>
-        <h2 style="margin-top: 18px;">Built in the open. <em style="color:var(--accent); font-style:italic;">Hack on it.</em></h2>
-        <p>
-          Whisky is fully open source. Read the code, fork it, redesign the UI, swap the AI model, or send a pull request.
-          Your data stays in your browser and your own keys.
-        </p>
+          <figure class="shot reveal">
+            <div class="shot-img">
+              <img src="assets/details-light.jpg" width="1440" height="816" decoding="async" alt="Song details view with album artwork, metadata, playback controls and synced lyrics" />
+            </div>
+            <figcaption>
+              <span class="tag">Now playing</span>
+              <h3>Lyrics in time</h3>
+              <p>Album art, credits, playback and karaoke-style synced lyrics in one quiet view. Nudge the sync when a line drifts.</p>
+            </figcaption>
+          </figure>
 
-        <div class="os-stats">
-          <div class="os-stat">
-            <div class="num">React 19</div>
-            <div class="lbl">Frontend</div>
-          </div>
-          <div class="os-stat">
-            <div class="num">Electron 33</div>
-            <div class="lbl">Desktop</div>
-          </div>
-          <div class="os-stat">
-            <div class="num">Supabase</div>
-            <div class="lbl">Realtime + Auth</div>
-          </div>
-          <div class="os-stat">
-            <div class="num">OpenRouter</div>
-            <div class="lbl">AI Curator</div>
-          </div>
-        </div>
-
-        <div class="hero-actions" style="justify-content: center; margin-top: 36px;">
-          <a class="btn btn-primary" href="https://github.com/ankitkumartiwari-web/whisky" target="_blank" rel="noopener">
-            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.6.5.5 5.6.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2.9-.3 2-.4 3-.4s2.1.1 3 .4c2.3-1.5 3.3-1.2 3.3-1.2.7 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.5-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.6 18.4.5 12 .5z"/></svg>
-            Star on GitHub
-          </a>
-          <a class="btn btn-ghost" href="https://github.com/ankitkumartiwari-web/whisky/issues" target="_blank" rel="noopener">
-            File an issue
-          </a>
+          <figure class="shot reveal d1">
+            <div class="shot-img">
+              <img src="assets/search-light.jpg" width="1440" height="816" decoding="async" alt="Search for Arijit Singh with live song suggestions and album artwork results" />
+            </div>
+            <figcaption>
+              <span class="tag">Search</span>
+              <h3>Find the right take</h3>
+              <p>Type a song, an artist or an album. Whisky matches the right recording — full length, not a 30-second teaser.</p>
+            </figcaption>
+          </figure>
         </div>
       </div>
-    </div>
-  </section>
+    </section>
+
+    <!-- ===== Maestro demo ===== -->
+    <section class="block demo" id="maestro">
+      <div class="container demo-grid">
+        <div class="demo-copy">
+          <span class="kicker reveal">Maestro, live</span>
+          <h2 class="reveal d1">Ask it <em>anything.</em><br/>It answers in music.</h2>
+          <p class="reveal d2">
+            Artist stories, a song's backstory, or a set for the exact kind of night.
+            Pick a prompt and watch Maestro build the reply.
+          </p>
+          <div class="prompt-chips reveal d3" role="group" aria-label="Try a Maestro prompt">
+            <button type="button" class="prompt-chip is-active" data-prompt="arijit" aria-pressed="true" aria-controls="chatLog">
+              <span class="chip-index">01</span> Who is Arijit Singh?
+            </button>
+            <button type="button" class="prompt-chip" data-prompt="rain" aria-pressed="false" aria-controls="chatLog">
+              <span class="chip-index">02</span> Make a rainy-night mix
+            </button>
+            <button type="button" class="prompt-chip" data-prompt="focus" aria-pressed="false" aria-controls="chatLog">
+              <span class="chip-index">03</span> Find me a focus mix
+            </button>
+            <button type="button" class="prompt-chip" data-prompt="start" aria-pressed="false" aria-controls="chatLog">
+              <span class="chip-index">04</span> What should I play first?
+            </button>
+          </div>
+          <p class="demo-note reveal d4">An interactive preview · canned replies, no API key needed.</p>
+
+          <div class="curator-stamp" aria-hidden="true">
+            <svg viewBox="0 0 120 120">
+              <defs>
+                <path id="stampCircle" d="M60,60 m-42,0 a42,42 0 1,1 84,0 a42,42 0 1,1 -84,0"/>
+              </defs>
+              <circle cx="60" cy="60" r="57" class="stamp-bg"/>
+              <circle cx="60" cy="60" r="50" class="stamp-ring"/>
+              <text><textPath href="#stampCircle" startOffset="0">MAESTRO · AI CURATOR · WHISKY ·</textPath></text>
+              <circle cx="60" cy="60" r="22" class="stamp-center"/>
+              <path class="stamp-star" d="M12 3l1.9 5.8H20l-4.9 3.6 1.9 5.8-5-3.6-5 3.6 1.9-5.8L4 8.8h6.1z" transform="translate(48 48)"/>
+            </svg>
+          </div>
+        </div>
+
+        <div class="demo-window reveal d2">
+          <div class="chat-shell">
+            <div class="chat-window">
+              <div class="chat-head">
+                <div class="chat-brand">
+                  <img src="assets/brand-mark.svg" alt="" width="34" height="34" />
+                  <div>
+                    <strong>Maestro</strong>
+                    <span>AI music curator</span>
+                  </div>
+                </div>
+                <div class="chat-status"><i aria-hidden="true"></i> Listening</div>
+              </div>
+
+              <div class="chat-log" id="chatLog">
+                <div class="msg assistant intro-msg">
+                  <span class="msg-avatar" aria-hidden="true">M</span>
+                  <div class="bubble">
+                    <p class="msg-text">Evening. Ask me about an artist, a song, or the kind of night you're chasing.</p>
+                  </div>
+                </div>
+              </div>
+
+              <form class="chat-form" id="chatForm">
+                <input id="chatInput" type="text" autocomplete="off" placeholder="Ask about an artist, a song, or a mood…" aria-label="Ask Maestro a question" />
+                <button type="submit" aria-label="Send message">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+                </button>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <p class="sr-only" id="demoStatus" aria-live="polite"></p>
+
+    <!-- ===== Features ===== -->
+    <section class="block" id="features" style="padding-top: 10px;">
+      <div class="container">
+        <div class="section-head">
+          <span class="kicker reveal">Why Whisky</span>
+          <h2 class="reveal d1">A music app that <em>listens</em> back.</h2>
+          <p class="reveal d2">
+            No ads. No autoplay traps. Just a quiet curator, a clean interface and the songs you actually asked for.
+          </p>
+        </div>
+
+        <div class="features">
+          <article class="feature reveal">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3l1.9 5.8H20l-4.9 3.6 1.9 5.8-5-3.6-5 3.6 1.9-5.8L4 8.8h6.1z"/></svg>
+            </div>
+            <h3>Maestro, the AI curator</h3>
+            <p>Ask for facts, a song's story or a playlist for the mood. Maestro replies in English or Hindi and returns real, playable tracks.</p>
+          </article>
+
+          <article class="feature reveal d1">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+            </div>
+            <h3>Mood mixes</h3>
+            <p>Workout in Punjabi, focus in lo-fi, sleep in Hindi ambient. Ten moods, tuned to the languages you listen in.</p>
+          </article>
+
+          <article class="feature reveal d2">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M7 9h10M7 13h6"/></svg>
+            </div>
+            <h3>Synced lyrics</h3>
+            <p>Karaoke-grade timing that follows the player clock, with a sync offset for when a line runs a touch early.</p>
+          </article>
+
+          <article class="feature reveal">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            </div>
+            <h3>Listening rooms</h3>
+            <p>Spin up a six-letter room code, invite friends and see who is listening live. Powered by Supabase Realtime presence.</p>
+          </article>
+
+          <article class="feature reveal d1">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+            </div>
+            <h3>Browse offline</h3>
+            <p>Saved songs keep their covers, lyrics and metadata without a connection. Audio streams when you are back online.</p>
+          </article>
+
+          <article class="feature reveal d2">
+            <div class="icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.6"/><rect x="14" y="3" width="7" height="7" rx="1.6"/><rect x="3" y="14" width="7" height="7" rx="1.6"/><rect x="14" y="14" width="7" height="7" rx="1.6"/></svg>
+            </div>
+            <h3>Personal widgets</h3>
+            <p>Pin Now Playing, Top Artists, Recent Plays, Stats and Maestro tips. Drag to reorder, remove whenever you like.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Download ===== -->
+    <section class="block" id="download">
+      <div class="container download-wrap">
+        <div class="download-card reveal">
+          <span class="kicker">Get it</span>
+          <h2>Free. Forever. <em>Yours.</em></h2>
+          <p class="sub">
+            One installer. Silent auto-updates. No ads, no credit card, no catch.
+          </p>
+
+          <div class="download-grid">
+            <a class="download-item" href="https://github.com/ankitkumartiwari-web/whisky/releases/latest/download/Whisky-Music-Setup.exe">
+              <span class="platform-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.5L10.5 4.4v7.1H3V5.5zm0 13L10.5 19.6v-7.1H3v6zm8.5 1.2L21 21V12.5h-9.5v7.2zM11.5 4.3L21 3v8.5h-9.5V4.3z"/></svg>
+              </span>
+              <div>
+                <h4>Windows</h4>
+                <p>Windows 10 / 11 · 64-bit installer · auto-updates to the latest release.</p>
+                <div class="cta-row">
+                  <span class="pill">Download · v1.1.7</span>
+                  <span class="pill lav">~150 MB</span>
+                </div>
+              </div>
+            </a>
+
+            <a class="download-item" href="https://github.com/ankitkumartiwari-web/whisky#readme" target="_blank" rel="noopener">
+              <span class="platform-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>
+              </span>
+              <div>
+                <h4>macOS</h4>
+                <p>Build from source on a Mac — <code style="font-size:12px">npm run dist:mac</code>. Signed builds are on the way.</p>
+                <div class="cta-row">
+                  <span class="pill lav">Coming soon</span>
+                </div>
+              </div>
+            </a>
+          </div>
+
+          <p class="download-note">
+            <strong>First launch:</strong> Windows may show a SmartScreen warning because the app is unsigned —
+            click <em>More info</em>, then <em>Run anyway</em>. It only happens once.
+            Browse every build on <a href="https://github.com/ankitkumartiwari-web/whisky/releases" target="_blank" rel="noopener">GitHub Releases</a>.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Open source ===== -->
+    <section class="block" id="opensource" style="padding-top: 0;">
+      <div class="container">
+        <div class="os-card reveal">
+          <span class="kicker">100% open source</span>
+          <h2>Built in the open. <em>Hack on it.</em></h2>
+          <p>
+            Read the code, fork it, redesign the interface, swap the AI model or send a pull request.
+            Your library lives on your device — no ads, no autoplay.
+          </p>
+
+          <div class="os-stats">
+            <div class="os-stat"><div class="num">React 19</div><div class="lbl">Frontend</div></div>
+            <div class="os-stat"><div class="num">Electron 33</div><div class="lbl">Desktop</div></div>
+            <div class="os-stat"><div class="num">Supabase</div><div class="lbl">Realtime + auth</div></div>
+            <div class="os-stat"><div class="num">OpenRouter</div><div class="lbl">Powers Maestro</div></div>
+          </div>
+
+          <div class="os-actions">
+            <a class="btn btn-primary" href="https://github.com/ankitkumartiwari-web/whisky" target="_blank" rel="noopener">
+              <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.6.5.5 5.6.5 12c0 5.1 3.3 9.4 7.9 10.9.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1.1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2.9-.3 2-.4 3-.4s2.1.1 3 .4c2.3-1.5 3.3-1.2 3.3-1.2.7 1.6.2 2.8.1 3.1.8.8 1.2 1.8 1.2 3.1 0 4.5-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6 4.6-1.5 7.9-5.8 7.9-10.9C23.5 5.6 18.4.5 12 .5z"/></svg>
+              Star on GitHub
+            </a>
+            <a class="btn btn-ghost" href="https://github.com/ankitkumartiwari-web/whisky/issues" target="_blank" rel="noopener">File an issue</a>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
 
   <!-- ===== Footer ===== -->
   <footer>
     <div class="container foot-row">
-      <div class="brand">
-        <svg class="disc" viewBox="0 0 64 64" fill="none" aria-hidden="true">
-          <rect width="64" height="64" rx="14" fill="#0E0B07"/>
-          <circle cx="32" cy="32" r="20" stroke="#D8A35C" stroke-width="7"/>
-          <circle cx="32" cy="32" r="4.5" fill="#D8A35C"/>
-          <path d="M32 10v8" stroke="#D8A35C" stroke-width="4" stroke-linecap="round"/>
-        </svg>
-        <span style="font-size: 18px;">Whisky Music</span>
+      <div class="foot-brand">
+        <img src="assets/brand-mark.svg" alt="" />
+        <span>Whisky Music</span>
       </div>
       <div class="foot-links">
         <a href="https://github.com/ankitkumartiwari-web/whisky" target="_blank" rel="noopener">GitHub</a>
         <a href="https://github.com/ankitkumartiwari-web/whisky/releases" target="_blank" rel="noopener">Releases</a>
-        <a href="https://github.com/ankitkumartiwari-web/whisky/blob/main/README.md" target="_blank" rel="noopener">Docs</a>
+        <a href="https://github.com/ankitkumartiwari-web/whisky#readme" target="_blank" rel="noopener">Docs</a>
         <a href="https://github.com/ankitkumartiwari-web/whisky/issues" target="_blank" rel="noopener">Issues</a>
       </div>
-      <div>© <span id="year"></span> · Crafted with patience.</div>
+      <div class="foot-copy">© <span id="year"></span> · Crafted with patience.</div>
     </div>
   </footer>
 
   <script>
-    // === Mobile nav ===
     const menu = document.getElementById('menuToggle');
     const links = document.getElementById('navLinks');
-    menu.addEventListener('click', () => links.classList.toggle('open'));
-    links.querySelectorAll('a').forEach((a) => a.addEventListener('click', () => links.classList.remove('open')));
+    menu.addEventListener('click', () => {
+      const open = links.classList.toggle('open');
+      menu.setAttribute('aria-expanded', String(open));
+    });
+    links.querySelectorAll('a').forEach((a) => a.addEventListener('click', () => {
+      links.classList.remove('open');
+      menu.setAttribute('aria-expanded', 'false');
+    }));
 
-    // === Year ===
     document.getElementById('year').textContent = new Date().getFullYear();
 
-    // === Reveal on scroll ===
     const io = new IntersectionObserver((entries) => {
       entries.forEach((entry) => {
         if (entry.isIntersecting) {
@@ -538,14 +1149,321 @@
     }, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
     document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
 
-    // === Subtle parallax on hero vinyl ===
-    const vinyl = document.querySelector('.vinyl');
-    if (vinyl && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      window.addEventListener('mousemove', (e) => {
-        const x = (e.clientX / window.innerWidth - 0.5) * 14;
-        const y = (e.clientY / window.innerHeight - 0.5) * 14;
-        vinyl.style.translate = `${x}px ${y}px`;
-      }, { passive: true });
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const finePointer = window.matchMedia('(pointer: fine)').matches;
+    const header = document.querySelector('header');
+    const progress = document.getElementById('scrollProgress');
+    let scrollQueued = false;
+
+    function updateScrollUI() {
+      const y = window.scrollY;
+      header.classList.toggle('scrolled', y > 16);
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      progress.style.width = `${max > 0 ? Math.min(100, (y / max) * 100) : 0}%`;
+      scrollQueued = false;
+    }
+    window.addEventListener('scroll', () => {
+      if (!scrollQueued) {
+        scrollQueued = true;
+        requestAnimationFrame(updateScrollUI);
+      }
+    }, { passive: true });
+    updateScrollUI();
+
+    const heroVisual = document.querySelector('.hero-visual');
+    const appFrame = document.querySelector('.app-frame');
+    if (heroVisual && appFrame && finePointer && !reduceMotion) {
+      heroVisual.addEventListener('pointermove', (event) => {
+        const rect = heroVisual.getBoundingClientRect();
+        const px = (event.clientX - rect.left) / rect.width - 0.5;
+        const py = (event.clientY - rect.top) / rect.height - 0.5;
+        appFrame.style.transform = `perspective(1100px) rotateX(${(-py * 5).toFixed(2)}deg) rotateY(${(px * 7).toFixed(2)}deg) translateY(-4px)`;
+      });
+      heroVisual.addEventListener('pointerleave', () => {
+        appFrame.style.transform = '';
+      });
+    }
+
+    if (finePointer && !reduceMotion) {
+      document.querySelectorAll('.shot').forEach((shot) => {
+        shot.addEventListener('pointermove', (event) => {
+          const rect = shot.getBoundingClientRect();
+          shot.style.setProperty('--mx', `${event.clientX - rect.left}px`);
+          shot.style.setProperty('--my', `${event.clientY - rect.top}px`);
+        });
+      });
+    }
+
+    const demoData = {
+      arijit: {
+        user: 'Who is Arijit Singh?',
+        intro: "Arijit Singh is one of India's most-streamed playback singers. He broke out with 'Tum Hi Ho' in 2013. Here's a short starting point:",
+        meta: '3 tracks · 13 min',
+        tracks: [
+          ['Tum Hi Ho', 'Arijit Singh', '4:22'],
+          ['Channa Mereya', 'Arijit Singh', '4:49'],
+          ['Kesariya', 'Arijit Singh', '4:28']
+        ],
+        footer: 'Ask for a decade-by-decade mix when you want the deep cuts.'
+      },
+      rain: {
+        user: 'Make a rainy-night mix',
+        intro: "A slow monsoon set: soft strings, Hindi indie and one ghazal for the window seat. No sudden drops.",
+        meta: '3 tracks · 15 min',
+        tracks: [
+          ['Sajjan Raazi', 'Satinder Sartaaj', '5:32'],
+          ['Raabta', 'Arijit Singh', '4:03'],
+          ['Phir Le Aaya Dil', 'Arijit Singh', '5:02']
+        ],
+        footer: 'Queued as “Monsoon Window” in your library.'
+      },
+      focus: {
+        user: 'Find me a focus mix',
+        intro: 'Instrumental Hindi film scores and low-vocal lo-fi. Steady tempo, no lyrics to pull you out of the page.',
+        meta: '3 tracks · 14 min',
+        tracks: [
+          ['Tere Bina', 'A. R. Rahman', '5:08'],
+          ['Saanson Ko', 'Arijit Singh', '4:45'],
+          ['Der Lagi Lekin', 'Shankar Mahadevan', '4:34']
+        ],
+        footer: 'Keep Maestro open and ask for “more like this”.'
+      },
+      start: {
+        user: 'What should I play first?',
+        intro: "Start with 'Sajjan Raazi' — a 5:32 slow burn that shows off full-length playback. Then let the queue drift:",
+        meta: '3 tracks · 14 min',
+        tracks: [
+          ['Sajjan Raazi', 'Satinder Sartaaj', '5:32'],
+          ['Ik Onkar', 'Harshdeep Kaur', '4:19'],
+          ['Jaan Di', 'Sajjan Adeeb', '3:58']
+        ],
+        footer: 'That first play was the whole reason Whisky exists.'
+      }
+    };
+
+    const fallbackReply = 'I can look up an artist, build a mood mix, or find a song. Try “Who is Arijit Singh?” or “Make a rainy-night mix.”';
+    const chatLog = document.getElementById('chatLog');
+    const chatForm = document.getElementById('chatForm');
+    const chatInput = document.getElementById('chatInput');
+    const demoStatus = document.getElementById('demoStatus');
+    const demoSection = document.getElementById('maestro');
+    const promptChips = Array.from(document.querySelectorAll('.prompt-chip'));
+    const mobileDemo = window.matchMedia('(max-width: 760px)');
+    let demoRun = 0;
+    let demoInteracted = false;
+    let demoAutoStarted = false;
+
+    function setActiveChip(key) {
+      promptChips.forEach((chip) => {
+        const active = chip.dataset.prompt === key;
+        chip.classList.toggle('is-active', active);
+        chip.setAttribute('aria-pressed', String(active));
+      });
+    }
+
+    function scrollChat() {
+      if (chatLog && !mobileDemo.matches) chatLog.scrollTop = chatLog.scrollHeight;
+    }
+
+    function alignReply(message) {
+      if (!chatLog || !message) return;
+      if (mobileDemo.matches) {
+        const delta = message.getBoundingClientRect().top - chatLog.getBoundingClientRect().top;
+        chatLog.scrollTop += delta - 6;
+      } else {
+        chatLog.scrollTop = chatLog.scrollHeight;
+      }
+    }
+
+    function makeMessage(role) {
+      const msg = document.createElement('div');
+      msg.className = `msg ${role}`;
+      if (role === 'assistant') {
+        const avatar = document.createElement('span');
+        avatar.className = 'msg-avatar';
+        avatar.setAttribute('aria-hidden', 'true');
+        avatar.textContent = 'M';
+        msg.append(avatar);
+      }
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      msg.append(bubble);
+      return { msg, bubble };
+    }
+
+    function addTyping(bubble) {
+      const typing = document.createElement('div');
+      typing.className = 'typing';
+      typing.setAttribute('aria-hidden', 'true');
+      typing.innerHTML = '<i></i><i></i><i></i>';
+      bubble.append(typing);
+      return typing;
+    }
+
+    function typeText(node, text, run, done) {
+      if (reduceMotion) {
+        node.textContent = text;
+        done();
+        return;
+      }
+      const step = Math.max(1, Math.ceil(text.length / 85));
+      let index = 0;
+      const timer = window.setInterval(() => {
+        if (run !== demoRun) {
+          window.clearInterval(timer);
+          return;
+        }
+        index = Math.min(text.length, index + step);
+        node.textContent = text.slice(0, index);
+        scrollChat();
+        if (index >= text.length) {
+          window.clearInterval(timer);
+          done();
+        }
+      }, 20);
+    }
+
+    function makePlaylist(tracks, meta) {
+      const card = document.createElement('div');
+      card.className = 'playlist-card';
+      const head = document.createElement('div');
+      head.className = 'playlist-head';
+      const left = document.createElement('span');
+      left.textContent = 'Made for you';
+      const right = document.createElement('span');
+      right.textContent = meta;
+      head.append(left, right);
+      const list = document.createElement('ol');
+      tracks.forEach((track, index) => {
+        const row = document.createElement('li');
+        const num = document.createElement('span');
+        num.className = 'track-num';
+        num.textContent = String(index + 1).padStart(2, '0');
+        const title = document.createElement('span');
+        title.className = 'track-title';
+        title.textContent = track[0];
+        const artist = document.createElement('small');
+        artist.textContent = track[1];
+        title.append(artist);
+        const duration = document.createElement('span');
+        duration.className = 'track-dur';
+        duration.textContent = track[2];
+        row.append(num, title, duration);
+        list.append(row);
+      });
+      const foot = document.createElement('div');
+      foot.className = 'playlist-foot';
+      foot.textContent = 'Queued in Whisky';
+      card.append(head, list, foot);
+      return card;
+    }
+
+    function respond({ userText, intro, tracks = null, meta = '', footer = '', chipKey = null }) {
+      if (!chatLog) return;
+      const run = ++demoRun;
+      setActiveChip(chipKey);
+
+      const greeting = chatLog.querySelector('.intro-msg');
+      if (greeting) greeting.remove();
+      chatLog.querySelectorAll('.typing').forEach((el) => el.remove());
+
+      const exchange = document.createElement('div');
+      exchange.className = 'exchange';
+      const user = makeMessage('user');
+      user.bubble.textContent = userText;
+      exchange.append(user.msg);
+      const assistant = makeMessage('assistant');
+      exchange.append(assistant.msg);
+      chatLog.append(exchange);
+
+      while (chatLog.querySelectorAll('.exchange').length > 3) {
+        chatLog.querySelector('.exchange').remove();
+      }
+
+      const typing = addTyping(assistant.bubble);
+      alignReply(assistant.msg);
+      window.setTimeout(() => {
+        if (run !== demoRun) return;
+        typing.remove();
+        const textNode = document.createElement('p');
+        textNode.className = 'msg-text';
+        assistant.bubble.append(textNode);
+        typeText(textNode, intro, run, () => {
+          if (run !== demoRun) return;
+          if (tracks) {
+            assistant.bubble.append(makePlaylist(tracks, meta));
+          }
+          if (footer) {
+            const foot = document.createElement('p');
+            foot.className = 'msg-foot';
+            foot.textContent = footer;
+            assistant.bubble.append(foot);
+          }
+          if (demoStatus) demoStatus.textContent = `Maestro: ${intro}${footer ? ' ' + footer : ''}`;
+          scrollChat();
+        });
+      }, reduceMotion ? 0 : 620);
+    }
+
+    function playPrompt(key, userText = null) {
+      const data = demoData[key];
+      if (!data) return;
+      respond({
+        userText: userText || data.user,
+        intro: data.intro,
+        tracks: data.tracks,
+        meta: data.meta,
+        footer: data.footer,
+        chipKey: key
+      });
+    }
+
+    function matchPrompt(text) {
+      const value = text.toLowerCase();
+      if (value.includes('arijit')) return 'arijit';
+      if (value.includes('rain') || value.includes('monsoon') || value.includes('barish')) return 'rain';
+      if (value.includes('focus') || value.includes('study') || value.includes('work')) return 'focus';
+      if (value.includes('first') || value.includes('start') || value.includes('begin')) return 'start';
+      return null;
+    }
+
+    promptChips.forEach((chip) => {
+      chip.addEventListener('click', () => {
+        demoInteracted = true;
+        playPrompt(chip.dataset.prompt);
+      });
+    });
+
+    if (chatForm && chatInput) {
+      chatInput.addEventListener('focus', () => { demoInteracted = true; }, { once: true });
+      chatForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const text = chatInput.value.trim();
+        if (!text) return;
+        demoInteracted = true;
+        chatInput.value = '';
+        const key = matchPrompt(text);
+        if (key) {
+          playPrompt(key, text);
+        } else {
+          respond({ userText: text, intro: fallbackReply, chipKey: null });
+        }
+      });
+    }
+
+    const demoWindow = document.querySelector('.demo-window');
+    if (demoSection && chatLog && 'IntersectionObserver' in window) {
+      const demoObserver = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting || demoAutoStarted) return;
+          demoAutoStarted = true;
+          demoObserver.disconnect();
+          window.setTimeout(() => {
+            if (!demoInteracted) playPrompt('arijit');
+          }, reduceMotion ? 200 : 900);
+        });
+      }, { threshold: 0.35 });
+      demoObserver.observe(demoWindow || demoSection);
     }
   </script>
 </body>
