@@ -1,6 +1,7 @@
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Check, Copy, LogOut, Play, Radio, Users, Wifi, WifiOff } from 'lucide-react';
-import type { CollabRoomApi, SessionUser } from '../lib/useCollabRoom';
+import { Check, Copy, LogOut, MessageCircle, Play, Radio, Send, Smile, Users, Wifi, WifiOff } from 'lucide-react';
+import type { CollabChatMessage, CollabRoomApi, SessionUser } from '../lib/useCollabRoom';
 
 interface MultiUserSessionProps {
   room: CollabRoomApi;
@@ -29,6 +30,13 @@ function colorFromId(id: string): string {
   return palette[hash % palette.length];
 }
 
+const CHAT_EMOJIS = ['❤️', '🔥', '😂', '👏', '🎵', '🙌', '😮', '💯', '🥹', '✨'];
+const CHAT_REACTIONS = ['❤️', '🔥', '😂', '👏'];
+
+function formatChatTime(value: number): string {
+  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 export function MultiUserSession({ room }: MultiUserSessionProps) {
   const {
     isConfigured,
@@ -45,6 +53,9 @@ export function MultiUserSession({ room }: MultiUserSessionProps) {
     isSyncing,
     followAlong,
     remoteSong,
+    chatMessages,
+    chatReactions,
+    chatNotice,
     copied,
     statusMessage,
     connectionStatus,
@@ -55,7 +66,33 @@ export function MultiUserSession({ room }: MultiUserSessionProps) {
     setSyncing,
     setFollowAlong,
     playRemoteSong,
+    sendChatMessage,
+    sendChatReaction,
   } = room;
+
+  const [chatDraft, setChatDraft] = useState('');
+  const [isEmojiOpen, setIsEmojiOpen] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const chatInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!isJoined) return;
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [chatMessages.length, isJoined]);
+
+  const handleChatSubmit = (event: FormEvent) => {
+    event.preventDefault();
+    if (sendChatMessage(chatDraft)) {
+      setChatDraft('');
+      setIsEmojiOpen(false);
+      chatInputRef.current?.focus();
+    }
+  };
+
+  const insertEmoji = (emoji: string) => {
+    setChatDraft((prev) => `${prev}${emoji}`.slice(0, 500));
+    chatInputRef.current?.focus();
+  };
 
   if (!isConfigured) {
     return (
@@ -93,7 +130,7 @@ export function MultiUserSession({ room }: MultiUserSessionProps) {
             </div>
             <p className="text-sm text-muted-foreground">
               Generate a private room code and share it with friends. Everyone in the room sees who's listening
-              live.
+              live and can chat while you listen.
             </p>
             <button
               type="button"
@@ -254,6 +291,157 @@ export function MultiUserSession({ room }: MultiUserSessionProps) {
             </button>
           </motion.div>
         )}
+      </div>
+
+      <div className="rounded-3xl border border-border/70 bg-card/50 backdrop-blur-xl p-6 sm:p-8">
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="mb-1 flex items-center gap-2 text-xs uppercase tracking-[0.2em] text-muted-foreground">
+              <MessageCircle className="h-3.5 w-3.5" /> Room chat
+            </p>
+            <h3 className="text-2xl">Talk while you listen</h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Live only — new joiners won’t see earlier messages.
+            </p>
+          </div>
+          <span className="rounded-full border border-border/70 bg-background/40 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            {chatMessages.length} live
+          </span>
+        </div>
+
+        <div className="max-h-80 space-y-3 overflow-y-auto pr-1">
+          {chatMessages.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border/70 bg-background/30 px-5 py-8 text-center">
+              <p className="text-sm text-muted-foreground">
+                No messages yet. Say hi or drop an emoji.
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground/70">
+                Messages aren’t stored, so the thread clears when the room ends.
+              </p>
+            </div>
+          ) : (
+            <AnimatePresence initial={false}>
+              {chatMessages.map((message: CollabChatMessage) => {
+                const isMe = message.userId === currentUserId;
+                const gradient = colorFromId(message.userId);
+                const reactions = chatReactions[message.id] ?? {};
+                return (
+                  <motion.div
+                    key={message.id}
+                    layout
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    className={`flex gap-2 ${isMe ? 'flex-row-reverse' : ''}`}
+                  >
+                    <div
+                      className={`mt-1 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br ${gradient} text-[10px] font-semibold text-white`}
+                    >
+                      {initialsFromName(message.displayName)}
+                    </div>
+                    <div
+                      className={`max-w-[84%] rounded-2xl border px-4 py-3 ${
+                        isMe
+                          ? 'border-accent/30 bg-accent/10'
+                          : 'border-border/70 bg-secondary/50'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+                        <span className="font-medium text-foreground">
+                          {isMe ? 'You' : message.displayName}
+                        </span>
+                        <span>{formatChatTime(message.sentAt)}</span>
+                      </div>
+                      <p className="mt-1 whitespace-pre-wrap break-words text-sm">{message.text}</p>
+                      <div className="mt-2 flex flex-wrap items-center gap-1">
+                        {CHAT_REACTIONS.map((emoji) => {
+                          const userIds = reactions[emoji] ?? [];
+                          const active = userIds.includes(currentUserId);
+                          return (
+                            <button
+                              key={emoji}
+                              type="button"
+                              onClick={() => sendChatReaction(message.id, emoji)}
+                              aria-label={`React with ${emoji}`}
+                              className={`rounded-full border px-2 py-0.5 text-xs transition-colors ${
+                                active
+                                  ? 'border-accent/50 bg-accent/15 text-accent'
+                                  : 'border-transparent text-muted-foreground hover:border-border hover:bg-secondary/70'
+                              }`}
+                            >
+                              <span>{emoji}</span>
+                              {userIds.length > 0 && <span className="ml-1">{userIds.length}</span>}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })}
+            </AnimatePresence>
+          )}
+          <div ref={chatEndRef} />
+        </div>
+
+        <form onSubmit={handleChatSubmit} className="mt-5 space-y-2">
+          {chatNotice && (
+            <motion.p
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="text-xs text-amber-400"
+            >
+              {chatNotice}
+            </motion.p>
+          )}
+          <div className="relative flex items-center gap-2 rounded-2xl border border-border/70 bg-background/40 p-2">
+            <button
+              type="button"
+              onClick={() => setIsEmojiOpen((open) => !open)}
+              aria-label="Add emoji"
+              className={`flex h-9 w-9 items-center justify-center rounded-full transition-colors ${
+                isEmojiOpen ? 'bg-accent/15 text-accent' : 'text-muted-foreground hover:bg-secondary/70'
+              }`}
+            >
+              <Smile className="h-4 w-4" />
+            </button>
+            <input
+              ref={chatInputRef}
+              value={chatDraft}
+              onChange={(event) => setChatDraft(event.target.value)}
+              placeholder="Message the room..."
+              maxLength={500}
+              className="min-w-0 flex-1 bg-transparent px-1 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={!chatDraft.trim()}
+              aria-label="Send message"
+              className="flex h-9 w-9 items-center justify-center rounded-full bg-accent text-accent-foreground transition-opacity disabled:opacity-40"
+            >
+              <Send className="h-4 w-4" />
+            </button>
+            {isEmojiOpen && (
+              <div className="absolute bottom-full left-0 z-20 mb-2 grid grid-cols-5 gap-1 rounded-2xl border border-border/70 bg-card p-2 shadow-xl">
+                {CHAT_EMOJIS.map((emoji) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    onClick={() => insertEmoji(emoji)}
+                    className="flex h-9 w-9 items-center justify-center rounded-xl text-lg transition-colors hover:bg-secondary/70"
+                    aria-label={`Insert ${emoji}`}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+            <span>500 characters · 1 message/sec</span>
+            <span>{chatMessages.length} message{chatMessages.length === 1 ? '' : 's'} in this session</span>
+          </div>
+        </form>
       </div>
 
       <div className="rounded-3xl border border-border/70 bg-card/50 backdrop-blur-xl p-8">

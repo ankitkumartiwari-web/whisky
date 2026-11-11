@@ -21,6 +21,16 @@ export interface SessionUser {
   isHost?: boolean;
 }
 
+export interface CollabChatMessage {
+  id: string;
+  userId: string;
+  displayName: string;
+  text: string;
+  sentAt: number;
+}
+
+export type CollabChatReactions = Record<string, Record<string, string[]>>;
+
 export type CollabConnectionStatus = 'idle' | 'connecting' | 'live' | 'error';
 
 export interface CollabRoomApi {
@@ -38,6 +48,9 @@ export interface CollabRoomApi {
   isSyncing: boolean;
   followAlong: boolean;
   remoteSong: RemoteBroadcastSong | null;
+  chatMessages: CollabChatMessage[];
+  chatReactions: CollabChatReactions;
+  chatNotice: string;
   copied: boolean;
   statusMessage: string;
   connectionStatus: CollabConnectionStatus;
@@ -48,6 +61,8 @@ export interface CollabRoomApi {
   setSyncing: (value: boolean) => void;
   setFollowAlong: (value: boolean) => void;
   playRemoteSong: (song: RemoteBroadcastSong) => void;
+  sendChatMessage: (text: string) => boolean;
+  sendChatReaction: (messageId: string, emoji: string) => void;
 }
 
 interface UseCollabRoomOptions {
@@ -72,6 +87,38 @@ const FOLLOW_STORAGE_KEY = 'whisky-room-follow-v2';
 // with "Broadcast my track" + "Listen along" enabled echo each other forever
 // and the song restarts in an infinite loop.
 const ECHO_SUPPRESS_MS = 5000;
+
+// Chat is broadcast-only. Nothing is persisted, so a listener who joins later
+// starts with an empty thread — by design.
+const CHAT_MAX_LENGTH = 500;
+const CHAT_MAX_MESSAGES = 200;
+const CHAT_MIN_INTERVAL_MS = 1000;
+const CHAT_WINDOW_MS = 10000;
+const CHAT_WINDOW_MAX = 8;
+const CHAT_REACTION_MIN_INTERVAL_MS = 350;
+
+function applyChatReaction(
+  current: CollabChatReactions,
+  messageId: string,
+  emoji: string,
+  userId: string,
+  active: boolean,
+): CollabChatReactions {
+  const messageReactions = current[messageId] ?? {};
+  const users = messageReactions[emoji] ?? [];
+  const nextUsers = active
+    ? users.includes(userId)
+      ? users
+      : [...users, userId]
+    : users.filter((id) => id !== userId);
+  const nextMessage = { ...messageReactions };
+  if (nextUsers.length > 0) nextMessage[emoji] = nextUsers;
+  else delete nextMessage[emoji];
+  const next = { ...current };
+  if (Object.keys(nextMessage).length > 0) next[messageId] = nextMessage;
+  else delete next[messageId];
+  return next;
+}
 
 function generateRoomCode(): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -138,6 +185,9 @@ export function useCollabRoom({
   const [copied, setCopied] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
   const [connectionStatus, setConnectionStatus] = useState<CollabConnectionStatus>('idle');
+  const [chatMessages, setChatMessages] = useState<CollabChatMessage[]>([]);
+  const [chatReactions, setChatReactions] = useState<CollabChatReactions>({});
+  const [chatNotice, setChatNotice] = useState('');
 
   const channelRef = useRef<any>(null);
   const userIdRef = useRef('');
@@ -156,6 +206,10 @@ export function useCollabRoom({
   });
   const echoRef = useRef<{ videoId: string; at: number } | null>(null);
   const userCountRef = useRef(0);
+  const chatLastSentRef = useRef(0);
+  const chatSentAtRef = useRef<number[]>([]);
+  const chatReactionLastSentRef = useRef(0);
+  const chatNoticeTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     followAlongRef.current = followAlong;
@@ -183,6 +237,19 @@ export function useCollabRoom({
   useEffect(() => {
     writeStoredFlag(FOLLOW_STORAGE_KEY, followAlong);
   }, [followAlong]);
+  useEffect(() => () => {
+    if (chatNoticeTimerRef.current !== null) {
+      window.clearTimeout(chatNoticeTimerRef.current);
+    }
+  }, []);
+
+  const showChatNotice = (message: string) => {
+    setChatNotice(message);
+    if (chatNoticeTimerRef.current !== null) {
+      window.clearTimeout(chatNoticeTimerRef.current);
+    }
+    chatNoticeTimerRef.current = window.setTimeout(() => setChatNotice(''), 2400);
+  };
 
   const broadcastCurrentSong = (channel: any) => {
     const song = songRef.current;
@@ -314,6 +381,24 @@ export function useCollabRoom({
           }
         });
 
+        channel.on('broadcast', { event: 'chat-message' }, ({ payload }: { payload: CollabChatMessage }) => {
+          if (isCancelled || !payload?.id || !payload.text || payload.userId === userIdRef.current) return;
+          const text = String(payload.text).slice(0, CHAT_MAX_LENGTH);
+          setChatMessages((prev) => [...prev, { ...payload, text }].slice(-CHAT_MAX_MESSAGES));
+        });
+
+        channel.on(
+          'broadcast',
+          { event: 'chat-reaction' },
+          ({ payload }: { payload: { messageId?: string; emoji?: string; userId?: string; active?: boolean } }) => {
+            if (isCancelled || !payload?.messageId || !payload.emoji || !payload.userId) return;
+            if (payload.userId === userIdRef.current) return;
+            setChatReactions((prev) =>
+              applyChatReaction(prev, payload.messageId!, payload.emoji!, payload.userId!, payload.active !== false),
+            );
+          },
+        );
+
         // Register the channel before subscribing: if the component unmounts (or
         // the room changes) while the join handshake is in flight, cleanup must be
         // able to unsubscribe it — otherwise it stays joined forever.
@@ -354,6 +439,9 @@ export function useCollabRoom({
         channel.unsubscribe();
       }
       setUsers([]);
+      setChatMessages([]);
+      setChatReactions({});
+      setChatNotice('');
       setConnectionStatus('idle');
     };
   }, [isJoined, roomCode]);
@@ -385,6 +473,12 @@ export function useCollabRoom({
     }
     setRemoteSong(null);
     echoRef.current = null;
+    setChatMessages([]);
+    setChatReactions({});
+    setChatNotice('');
+    chatLastSentRef.current = 0;
+    chatSentAtRef.current = [];
+    chatReactionLastSentRef.current = 0;
     // A host expects whatever they play to reach the room.
     setIsSyncing(true);
     setFollowAlongState(true);
@@ -408,6 +502,12 @@ export function useCollabRoom({
     setPendingCode('');
     setRemoteSong(null);
     echoRef.current = null;
+    setChatMessages([]);
+    setChatReactions({});
+    setChatNotice('');
+    chatLastSentRef.current = 0;
+    chatSentAtRef.current = [];
+    chatReactionLastSentRef.current = 0;
     // Joining someone's room means "play what they're playing" — without this
     // the listener only saw the remote card and had to find and click Play.
     setFollowAlongState(true);
@@ -420,6 +520,12 @@ export function useCollabRoom({
     setRoomCode('');
     setRemoteSong(null);
     echoRef.current = null;
+    setChatMessages([]);
+    setChatReactions({});
+    setChatNotice('');
+    chatLastSentRef.current = 0;
+    chatSentAtRef.current = [];
+    chatReactionLastSentRef.current = 0;
     try {
       window.localStorage.removeItem(ROOM_STORAGE_KEY);
     } catch {
@@ -457,6 +563,65 @@ export function useCollabRoom({
     onRemoteSongRef.current?.(song);
   };
 
+  const sendChatMessage = (rawText: string): boolean => {
+    const text = rawText.replace(/\s+/g, ' ').trim().slice(0, CHAT_MAX_LENGTH);
+    if (!text) return false;
+    const channel = channelRef.current;
+    if (!channel || connectionStatus !== 'live') {
+      showChatNotice('Chat is still connecting.');
+      return false;
+    }
+    const now = Date.now();
+    if (now - chatLastSentRef.current < CHAT_MIN_INTERVAL_MS) {
+      showChatNotice('Slow down a little.');
+      return false;
+    }
+    const recent = chatSentAtRef.current.filter((sentAt) => now - sentAt < CHAT_WINDOW_MS);
+    if (recent.length >= CHAT_WINDOW_MAX) {
+      showChatNotice('Message limit reached. Try again in a moment.');
+      return false;
+    }
+    chatLastSentRef.current = now;
+    chatSentAtRef.current = [...recent, now];
+
+    const message: CollabChatMessage = {
+      id: `chat-${now}-${Math.random().toString(36).slice(2, 8)}`,
+      userId: userIdRef.current,
+      displayName: displayNameRef.current,
+      text,
+      sentAt: now,
+    };
+    void channel
+      .send({ type: 'broadcast', event: 'chat-message', payload: message })
+      .catch(() => showChatNotice('Message could not be sent.'));
+    setChatMessages((prev) => [...prev, message].slice(-CHAT_MAX_MESSAGES));
+    return true;
+  };
+
+  const sendChatReaction = (messageId: string, emoji: string) => {
+    const channel = channelRef.current;
+    if (!channel || connectionStatus !== 'live') {
+      showChatNotice('Chat is still connecting.');
+      return;
+    }
+    const now = Date.now();
+    if (now - chatReactionLastSentRef.current < CHAT_REACTION_MIN_INTERVAL_MS) return;
+    chatReactionLastSentRef.current = now;
+    const active = !(chatReactions[messageId]?.[emoji] ?? []).includes(userIdRef.current);
+    const payload = {
+      messageId,
+      emoji,
+      userId: userIdRef.current,
+      displayName: displayNameRef.current,
+      active,
+      at: now,
+    };
+    void channel
+      .send({ type: 'broadcast', event: 'chat-reaction', payload })
+      .catch(() => showChatNotice('Reaction could not be sent.'));
+    setChatReactions((prev) => applyChatReaction(prev, messageId, emoji, userIdRef.current, active));
+  };
+
   const hostUser = useMemo(() => users.find((u) => u.isHost) ?? null, [users]);
 
   return {
@@ -474,6 +639,9 @@ export function useCollabRoom({
     isSyncing,
     followAlong,
     remoteSong,
+    chatMessages,
+    chatReactions,
+    chatNotice,
     copied,
     statusMessage,
     connectionStatus,
@@ -484,5 +652,7 @@ export function useCollabRoom({
     setSyncing,
     setFollowAlong,
     playRemoteSong,
+    sendChatMessage,
+    sendChatReaction,
   };
 }
